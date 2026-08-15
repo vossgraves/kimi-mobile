@@ -62,6 +62,7 @@ import java.util.Locale
 @Composable
 fun ModelPickerSheet(
     models: List<KimiModel>,
+    hasZenKey: Boolean,
     selectedId: String,
     effort: ReasoningEffort,
     onSelect: (String) -> Unit,
@@ -127,6 +128,7 @@ fun ModelPickerSheet(
                     items(entries, key = { it.id }) { model ->
                         ModelRow(
                             model = model,
+                            locked = model.requiresKey && !hasZenKey,
                             selected = model.id == selectedId,
                             effort = effort,
                             onSelect = { onSelect(model.id) },
@@ -142,6 +144,7 @@ fun ModelPickerSheet(
 @Composable
 private fun ModelRow(
     model: KimiModel,
+    locked: Boolean,
     selected: Boolean,
     effort: ReasoningEffort,
     onSelect: () -> Unit,
@@ -149,6 +152,7 @@ private fun ModelRow(
 ) {
     Surface(
         onClick = onSelect,
+        enabled = !locked,
         shape = RoundedCornerShape(16.dp),
         color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh
         else MaterialTheme.colorScheme.surface,
@@ -167,6 +171,11 @@ private fun ModelRow(
                             Spacer(Modifier.width(6.dp))
                             Tag("free", MaterialTheme.colorScheme.tertiaryContainer,
                                 MaterialTheme.colorScheme.onTertiaryContainer)
+                        }
+                        if (locked) {
+                            Spacer(Modifier.width(6.dp))
+                            Tag("needs key", MaterialTheme.colorScheme.surfaceContainerHighest,
+                                MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (model.reasoning) {
                             Spacer(Modifier.width(6.dp))

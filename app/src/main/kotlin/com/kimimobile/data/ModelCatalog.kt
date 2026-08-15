@@ -1,6 +1,8 @@
 package com.kimimobile.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -43,12 +45,22 @@ object ModelCatalog {
     ): List<KimiModel> {
         if (!force) cached?.let { return it }
         val fetched = withContext(Dispatchers.IO) {
-            val zen = runCatching { fetchZen(zenKey) }.getOrDefault(emptyList())
-            val kimi = runCatching { fetchKimi(kimiBaseUrl, kimiToken) }.getOrDefault(emptyList())
-            kimi + zen
+            // Fetch both in parallel; a slow proxy shouldn't delay Zen.
+            coroutineScope {
+                val zenJob = async { runCatching { fetchZen(zenKey) }.getOrDefault(emptyList()) }
+                val kimiJob = async {
+                    runCatching { fetchKimi(kimiBaseUrl, kimiToken) }.getOrDefault(emptyList())
+                }
+                kimiJob.await() + zenJob.await()
+            }
         }
-        // Never leave the picker empty because a network call failed.
-        val result = fetched.ifEmpty { Models.all }
+
+        // Merge rather than replace: if one provider fails to answer we still
+        // want the other's models, plus the built-ins as a floor. This is why
+        // Zen models could vanish entirely — a single failure dropped them.
+        val result = (fetched + Models.all)
+            .distinctBy { it.id }
+            .sortedWith(compareBy({ it.provider.ordinal }, { it.requiresKey }, { it.name }))
         cached = result
         return result
     }

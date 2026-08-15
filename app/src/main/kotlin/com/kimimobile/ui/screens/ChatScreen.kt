@@ -276,9 +276,10 @@ fun ChatScreen(
 
     if (showModelSheet) {
         ModelPickerSheet(
-            models = availableModels
-                .filterNot { it.hidden }
-                .filter { !it.requiresKey || settings.zenApiKey.isNotBlank() },
+            // Show everything, including paid Zen models — they render as
+            // locked rather than vanishing, so you can see what a key buys.
+            models = availableModels.filterNot { it.hidden },
+            hasZenKey = settings.zenApiKey.isNotBlank(),
             selectedId = settings.model,
             effort = ReasoningEffort.byId(settings.reasoningEffort),
             onSelect = {

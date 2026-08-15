@@ -65,8 +65,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kimimobile.BuildConfig
-import com.kimimobile.data.Models
-import com.kimimobile.data.Provider
 import com.kimimobile.ui.ChatViewModel
 import com.kimimobile.ui.components.SettingsRow
 import com.kimimobile.ui.components.SettingsSection
@@ -143,7 +141,6 @@ fun SettingsScreen(
         viewModel.setCompactThreshold(thresholdPct)
     }
 
-    val currentModel = Models.byId(settings.model) ?: Models.default
     val signedIn = settings.token.isNotBlank()
 
     Scaffold(
@@ -215,32 +212,7 @@ fun SettingsScreen(
                 )
             }
 
-            // ---- Model ----
-            SettingsSection(
-                title = "Model",
-                subtitle = "${currentModel.name} · ${
-                    String.format(Locale.US, "%,d", currentModel.contextTokens)
-                } tokens",
-            ) {
-                Models.selectable(hasZenKey = settings.zenApiKey.isNotBlank()).forEach { model ->
-                    SettingsRow(
-                        title = model.name,
-                        subtitle = model.description,
-                        icon = if (model.provider == Provider.ZEN) Icons.Default.AutoAwesome else null,
-                        onClick = { viewModel.setModel(model.id) },
-                        trailing = {
-                            if (model.id == settings.model) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = "Selected",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        },
-                    )
-                }
-            }
-
+            // Model selection lives in the composer picker — not duplicated here.
             // ---- Providers ----
             SettingsSection(
                 title = "Providers",
