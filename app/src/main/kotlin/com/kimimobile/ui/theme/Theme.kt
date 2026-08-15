@@ -22,12 +22,14 @@ import androidx.compose.ui.unit.sp
  * for identity, blue for state.
  */
 object Claude {
-    // Canvas and cards
-    val Black = Color(0xFF000000)
-    val Card = Color(0xFF1C1C1E)
-    val CardPressed = Color(0xFF2A2A2C)
-    val Elevated = Color(0xFF242426)
-    val Hairline = Color(0xFF2E2E30)
+    // Canvas and cards. Not pure black: #000 crushes every edge and strobes
+    // on OLED while scrolling. A near-black with a hint of warmth keeps the
+    // card boundaries readable and the whole surface calmer.
+    val Black = Color(0xFF17171A)
+    val Card = Color(0xFF212125)
+    val CardPressed = Color(0xFF2B2B30)
+    val Elevated = Color(0xFF292930)
+    val Hairline = Color(0xFF33333A)
 
     // Text
     val TextPrimary = Color(0xFFF5F5F5)

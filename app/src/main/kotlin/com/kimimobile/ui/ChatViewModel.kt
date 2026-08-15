@@ -18,7 +18,12 @@ import com.kimimobile.data.Conversation
 import com.kimimobile.data.ConversationStore
 import com.kimimobile.data.ConversationSummary
 import com.kimimobile.data.ReasoningEffort
+import com.kimimobile.data.ModelRouter
+import com.kimimobile.data.NodeState
 import com.kimimobile.data.StoredMessage
+import com.kimimobile.data.SwarmMode
+import com.kimimobile.data.TaskGraph
+import com.kimimobile.data.TaskKind
 import com.kimimobile.service.WakeLockService
 import com.kimimobile.data.Marketplace
 import com.kimimobile.data.Provider
@@ -338,6 +343,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val mention = Subagents.parseMention(text)
         when {
             mention != null -> sendToSubagent(mention.first, mention.second, cfg)
+            mode == AgentMode.BUILD -> sendSwarm(text, cfg)
             mode.usesTools -> sendAgent(text, cfg, mode)
             else -> sendChat(text, cfg, images)
         }
@@ -506,6 +512,179 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Agent mode (prompt-protocol tool loop) ------------------------------
+
+    /**
+     * Build mode plans a task graph, then runs it with a worker pool —
+     * jcode's model. Independent work goes in parallel and each task is
+     * routed to the cheapest model that can do it, which matters far more on
+     * a phone than it does on a laptop.
+     */
+    private fun sendSwarm(text: String, cfg: AppSettings) {
+        val userMsg = ChatMessage(role = MessageRole.USER, content = text.trim())
+        val placeholder = ChatMessage(role = MessageRole.ASSISTANT, content = "", streaming = true)
+        _messages.update { it + userMsg + placeholder }
+        refreshContext()
+
+        _isStreaming.value = true
+        _isAgentTurn.value = true
+        if (cfg.keepAwake) WakeLockService.start(getApplication(), "Build run in progress")
+
+        streamJob = viewModelScope.launch {
+            try {
+                val swarmMode = SwarmMode.LIGHT
+                val (baseUrl, token) = endpointFor(cfg.model, cfg)
+
+                // 1. Coordinator plans the graph.
+                _tasks.value = listOf(AgentTask("Planning", TaskStatus.ACTIVE))
+                val plan = api.complete(
+                    baseUrl = baseUrl,
+                    token = token,
+                    model = Models.resolve(cfg.model),
+                    messages = listOf(
+                        ApiMessage("system", TaskGraph.plannerPrompt(swarmMode)),
+                        ApiMessage("user", text.trim()),
+                    ),
+                    maxTokens = 1024,
+                )
+                val graph = TaskGraph.parse(plan, swarmMode)
+                if (graph == null) {
+                    // No usable plan: answer directly rather than failing the
+                    // turn. Better a plain reply than an error.
+                    _tasks.value = emptyList()
+                    val direct = api.complete(
+                        baseUrl = baseUrl,
+                        token = token,
+                        model = Models.resolve(cfg.model),
+                        messages = listOf(
+                            ApiMessage("system", AgentMode.BUILD.prompt),
+                            ApiMessage("user", text.trim()),
+                        ),
+                        maxTokens = 4096,
+                    )
+                    _messages.update { list ->
+                        list.map {
+                            if (it.id == placeholder.id) {
+                                it.copy(content = stripProtocolLines(direct), streaming = false)
+                            } else it
+                        }
+                    }
+                    _isConnected.value = true
+                    persistConversation()
+                    return@launch
+                }
+
+                fun publishTasks() {
+                    _tasks.value = graph.all.map { node ->
+                        AgentTask(
+                            text = "${node.kind.label}: ${node.title}",
+                            status = when (node.state) {
+                                NodeState.DONE -> TaskStatus.DONE
+                                NodeState.RUNNING -> TaskStatus.ACTIVE
+                                NodeState.FAILED -> TaskStatus.DONE
+                                else -> TaskStatus.PENDING
+                            },
+                        )
+                    }
+                }
+                publishTasks()
+
+                // 2. Walk the DAG, running each ready batch in parallel.
+                while (!graph.isComplete) {
+                    val batch = graph.nextBatch()
+                    if (batch.isEmpty()) break
+                    batch.forEach { graph.markRunning(it.id) }
+                    publishTasks()
+
+                    val results = coroutineScope {
+                        batch.map { node ->
+                            async {
+                                val route = ModelRouter.route(
+                                    kind = node.kind,
+                                    available = _availableModels.value,
+                                    coordinatorModel = cfg.model,
+                                )
+                                val (nodeUrl, nodeToken) = endpointFor(route.modelId, cfg)
+                                val context = graph.contextFor(node)
+                                val outcome = runCatching {
+                                    api.complete(
+                                        baseUrl = nodeUrl,
+                                        token = nodeToken,
+                                        model = Models.resolve(route.modelId),
+                                        messages = buildList {
+                                            add(ApiMessage("system", workerPrompt(node.kind)))
+                                            if (context.isNotBlank()) {
+                                                add(ApiMessage("user", "Context from earlier tasks:\n$context"))
+                                            }
+                                            add(ApiMessage("user", node.prompt))
+                                        },
+                                        maxTokens = 2048,
+                                    )
+                                }
+                                node to outcome
+                            }
+                        }.awaitAll()
+                    }
+
+                    results.forEach { (node, outcome) ->
+                        outcome
+                            .onSuccess { graph.complete(node.id, stripProtocolLines(it)) }
+                            .onFailure { graph.fail(node.id, "Failed: ${it.message}") }
+                    }
+                    publishTasks()
+                    refreshContext()
+                }
+
+                // 3. Coordinator writes the answer from the graph's outputs.
+                val findings = graph.all
+                    .filter { it.output.isNotBlank() }
+                    .joinToString("\n\n") { "### ${it.title}\n${it.output}" }
+                val answer = api.complete(
+                    baseUrl = baseUrl,
+                    token = token,
+                    model = Models.resolve(cfg.model),
+                    messages = listOf(
+                        ApiMessage(
+                            "system",
+                            "Write the final answer from these task results. Be direct, " +
+                                "keep any code intact, and say plainly if something failed."
+                        ),
+                        ApiMessage("user", "Task: ${text.trim()}\n\nResults:\n$findings"),
+                    ),
+                    maxTokens = 4096,
+                )
+                _messages.update { list ->
+                    list.map {
+                        if (it.id == placeholder.id) {
+                            it.copy(content = answer.ifBlank { findings }, streaming = false)
+                        } else it
+                    }
+                }
+                _tasks.update { list -> list.map { it.copy(status = TaskStatus.DONE) } }
+                _isConnected.value = true
+                refreshContext()
+                persistConversation()
+                maybeAutoCompact()
+            } catch (e: Exception) {
+                failPlaceholder(placeholder, e)
+            } finally {
+                _isStreaming.value = false
+                _isAgentTurn.value = false
+                WakeLockService.stop(getApplication())
+            }
+        }
+    }
+
+    /** Per-kind worker framing — short, because the model choice does the work. */
+    private fun workerPrompt(kind: TaskKind): String = when (kind) {
+        TaskKind.GATHER -> "Gather the requested information and report it plainly. " +
+            "No analysis, no recommendations — just what you found."
+        TaskKind.REASON -> "Think this through carefully and commit to a position. " +
+            "State the reasoning briefly, then the conclusion."
+        TaskKind.PRODUCE -> "Produce the requested output. Complete and runnable, " +
+            "no placeholders, minimal commentary."
+        TaskKind.VERIFY -> "Check the work in the context for correctness. " +
+            "Report only real problems; say 'looks correct' if there are none."
+    }
 
     private fun sendAgent(text: String, cfg: AppSettings, mode: AgentMode) {
         val userMsg = ChatMessage(role = MessageRole.USER, content = text.trim())
