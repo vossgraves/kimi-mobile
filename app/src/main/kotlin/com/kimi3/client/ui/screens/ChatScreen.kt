@@ -25,19 +25,28 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -51,26 +60,38 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.kimi3.client.data.SkillEngine
 import com.kimi3.client.ui.ChatMessage
 import com.kimi3.client.ui.ChatViewModel
+import com.kimi3.client.ui.ContextState
 import com.kimi3.client.ui.MessageRole
 import com.kimi3.client.ui.components.MarkdownText
 import com.kimi3.client.ui.components.TypingIndicator
+import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
     onOpenSettings: () -> Unit,
+    onOpenMarketplace: () -> Unit,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val messages by viewModel.messages.collectAsState()
     val isStreaming by viewModel.isStreaming.collectAsState()
+    val isAgentTurn by viewModel.isAgentTurn.collectAsState()
+    val isCompacting by viewModel.isCompacting.collectAsState()
     val error by viewModel.error.collectAsState()
     val isConnected by viewModel.isConnected.collectAsState()
+    val contextState by viewModel.contextState.collectAsState()
+    val settings by viewModel.settings.collectAsState()
 
     var input by rememberSaveable { mutableStateOf("") }
+    var showContextSheet by rememberSaveable { mutableStateOf(false) }
+    var showAgentSheet by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(error) {
         error?.let {
@@ -96,7 +117,45 @@ fun ChatScreen(
         },
         onOpenSettings = onOpenSettings,
         snackbarHostState = snackbarHostState,
+        contextState = contextState,
+        isAgentTurn = isAgentTurn,
+        isCompacting = isCompacting,
+        agentEnabled = settings.agentEnabled,
+        installedSkills = settings.installedSkills,
+        onAgentToggle = viewModel::setAgentEnabled,
+        onToggleSkill = viewModel::toggleSkill,
+        onCompactNow = viewModel::compactNow,
+        onOpenMarketplace = onOpenMarketplace,
+        onOpenContextSheet = { showContextSheet = true },
+        onOpenAgentSheet = { showAgentSheet = true },
     )
+
+    if (showContextSheet) {
+        ContextSheet(
+            context = contextState,
+            isCompacting = isCompacting,
+            autoCompact = settings.autoCompact,
+            thresholdPct = settings.compactThresholdPct,
+            onAutoCompactChange = viewModel::setAutoCompact,
+            onThresholdChange = viewModel::setCompactThreshold,
+            onCompactNow = viewModel::compactNow,
+            onDismiss = { showContextSheet = false },
+        )
+    }
+
+    if (showAgentSheet) {
+        AgentSheet(
+            agentEnabled = settings.agentEnabled,
+            installedSkills = settings.installedSkills,
+            onAgentToggle = viewModel::setAgentEnabled,
+            onToggleSkill = viewModel::toggleSkill,
+            onOpenMarketplace = {
+                showAgentSheet = false
+                onOpenMarketplace()
+            },
+            onDismiss = { showAgentSheet = false },
+        )
+    }
 }
 
 /**
@@ -114,6 +173,17 @@ fun ChatScreenContent(
     onOpenSettings: (() -> Unit)? = null,
     snackbarHostState: SnackbarHostState? = null,
     modifier: Modifier = Modifier,
+    contextState: ContextState = ContextState(),
+    isAgentTurn: Boolean = false,
+    isCompacting: Boolean = false,
+    agentEnabled: Boolean = false,
+    installedSkills: Set<String> = emptySet(),
+    onAgentToggle: (Boolean) -> Unit = {},
+    onToggleSkill: (String) -> Unit = {},
+    onCompactNow: () -> Unit = {},
+    onOpenMarketplace: (() -> Unit)? = null,
+    onOpenContextSheet: () -> Unit = {},
+    onOpenAgentSheet: () -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -143,6 +213,7 @@ fun ChatScreenContent(
                             Spacer(Modifier.width(4.dp))
                             Text(
                                 text = when {
+                                    isStreaming && isAgentTurn -> "agent working…"
                                     isStreaming -> "thinking…"
                                     isConnected == true -> "connected"
                                     else -> "offline"
@@ -150,6 +221,20 @@ fun ChatScreenContent(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            if (agentEnabled) {
+                                Spacer(Modifier.width(8.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                                ) {
+                                    Text(
+                                        "agent",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                 },
@@ -163,27 +248,297 @@ fun ChatScreenContent(
             )
         },
     ) { padding ->
-        Column(
+        Box(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .imePadding()
-                .navigationBarsPadding(),
         ) {
-            ChatMessageList(
-                messages = messages,
-                isStreaming = isStreaming,
-                modifier = Modifier.weight(1f),
-            )
-            Composer(
-                input = input,
-                onInputChange = onInputChange,
-                onSend = onSend,
-                enabled = !isStreaming,
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .imePadding()
+                    .navigationBarsPadding(),
+            ) {
+                ChatMessageList(
+                    messages = messages,
+                    isStreaming = isStreaming,
+                    modifier = Modifier.weight(1f),
+                )
+                Composer(
+                    input = input,
+                    onInputChange = onInputChange,
+                    onSend = onSend,
+                    enabled = !isStreaming,
+                    agentEnabled = agentEnabled,
+                    onOpenAgentSheet = onOpenAgentSheet,
+                )
+            }
+            // Bottom-left context ring, floating above the composer (Claude-style).
+            ContextRingButton(
+                context = contextState,
+                onClick = onOpenContextSheet,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 14.dp, bottom = 82.dp)
+                    .imePadding(),
             )
         }
     }
 }
+
+// ---- Context ring & sheet ----------------------------------------------------
+
+@Composable
+private fun ContextRingButton(
+    context: ContextState,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val ringColor = when {
+        context.pct >= 0.8 -> MaterialTheme.colorScheme.error
+        context.pct >= 0.6 -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 3.dp,
+        modifier = modifier.size(46.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+                progress = { context.pct.toFloat().coerceIn(0f, 1f) },
+                color = ringColor,
+                trackColor = MaterialTheme.colorScheme.outlineVariant,
+                strokeWidth = 3.dp,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(6.dp),
+            )
+            Text(
+                text = "${(context.pct * 100).toInt().coerceAtMost(99)}%",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = ringColor,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ContextSheet(
+    context: ContextState,
+    isCompacting: Boolean,
+    autoCompact: Boolean,
+    thresholdPct: Int,
+    onAutoCompactChange: (Boolean) -> Unit,
+    onThresholdChange: (Int) -> Unit,
+    onCompactNow: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val ringColor = when {
+                context.pct >= 0.8 -> MaterialTheme.colorScheme.error
+                context.pct >= 0.6 -> MaterialTheme.colorScheme.tertiary
+                else -> MaterialTheme.colorScheme.primary
+            }
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(96.dp)) {
+                CircularProgressIndicator(
+                    progress = { context.pct.toFloat().coerceIn(0f, 1f) },
+                    color = ringColor,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                    strokeWidth = 6.dp,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Text(
+                    text = "${(context.pct * 100).toInt()}%",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ringColor,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "Context window",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = String.format(
+                    Locale.US,
+                    "%,d of %,d tokens · %d messages",
+                    context.tokens,
+                    context.maxTokens,
+                    context.messageCount,
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Estimated locally — the web API reports no usage.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(20.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Auto-compact", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Summarize old turns when the window fills up",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = autoCompact, onCheckedChange = onAutoCompactChange)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Threshold",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "$thresholdPct%",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Slider(
+                value = thresholdPct.toFloat(),
+                onValueChange = { onThresholdChange(it.toInt()) },
+                valueRange = 40f..95f,
+                enabled = autoCompact,
+            )
+            Spacer(Modifier.height(12.dp))
+            TextButton(
+                onClick = onCompactNow,
+                enabled = !isCompacting,
+            ) {
+                Text(if (isCompacting) "Compacting…" else "Compact now")
+            }
+        }
+    }
+}
+
+// ---- Agent sheet -------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AgentSheet(
+    agentEnabled: Boolean,
+    installedSkills: Set<String>,
+    onAgentToggle: (Boolean) -> Unit,
+    onToggleSkill: (String) -> Unit,
+    onOpenMarketplace: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Agent mode", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "The model can call tools — web search, fetching, math — to solve tasks itself",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = agentEnabled, onCheckedChange = onAgentToggle)
+            }
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Tools",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SkillEngine.all.forEach { skill ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(skill.name, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            skill.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Switch(
+                        checked = skill.id in installedSkills,
+                        onCheckedChange = { onToggleSkill(skill.id) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+            if (onOpenMarketplace != null) {
+                Surface(
+                    onClick = onOpenMarketplace,
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.Storefront,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Marketplace", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                            Text(
+                                "Skills, connectors & MCP servers",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "Open",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---- Message list ------------------------------------------------------------
 
 @Composable
 private fun ChatMessageList(
@@ -222,6 +577,35 @@ private fun ChatMessageList(
 
 @Composable
 private fun MessageBubble(message: ChatMessage, showTyping: Boolean) {
+    if (message.notice) {
+        // Compacted-context card: muted, centered, not part of the turn flow.
+        Column(
+            Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.widthIn(max = 480.dp),
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        "Context compacted — earlier turns summarized",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    MarkdownText(
+                        markdown = message.content,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+        return
+    }
+
     if (message.role == MessageRole.USER) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -354,6 +738,8 @@ private fun Composer(
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
     enabled: Boolean,
+    agentEnabled: Boolean,
+    onOpenAgentSheet: () -> Unit,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -365,10 +751,31 @@ private fun Composer(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
+            // "+" — agent mode & tools (Claude-style).
+            IconButton(
+                onClick = onOpenAgentSheet,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (agentEnabled) MaterialTheme.colorScheme.tertiaryContainer
+                        else MaterialTheme.colorScheme.surfaceContainerHighest
+                    ),
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Agent & tools",
+                    tint = if (agentEnabled) MaterialTheme.colorScheme.onTertiaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
             OutlinedTextField(
                 value = input,
                 onValueChange = onInputChange,
-                placeholder = { Text("Message Kimi…") },
+                placeholder = {
+                    Text(if (agentEnabled) "Ask the agent…" else "Message Kimi…")
+                },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(24.dp),
                 maxLines = 5,

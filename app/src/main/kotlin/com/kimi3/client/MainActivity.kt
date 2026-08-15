@@ -13,6 +13,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kimi3.client.ui.ChatViewModel
 import com.kimi3.client.ui.screens.ChatScreen
 import com.kimi3.client.ui.screens.LoginScreen
+import com.kimi3.client.ui.screens.MarketplaceScreen
 import com.kimi3.client.ui.screens.SettingsScreen
 import com.kimi3.client.ui.theme.KimiTheme
 
@@ -28,7 +29,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Chat, Settings, Login }
+private enum class Screen { Chat, Settings, Login, Marketplace }
 
 @Composable
 private fun App(viewModel: ChatViewModel = viewModel()) {
@@ -38,16 +39,22 @@ private fun App(viewModel: ChatViewModel = viewModel()) {
         Screen.Chat -> ChatScreen(
             viewModel = viewModel,
             onOpenSettings = { screen = Screen.Settings },
+            onOpenMarketplace = { screen = Screen.Marketplace },
         )
         Screen.Settings -> SettingsScreen(
             viewModel = viewModel,
             onBack = { screen = Screen.Chat },
             onOpenLogin = { screen = Screen.Login },
+            onOpenMarketplace = { screen = Screen.Marketplace },
         )
         Screen.Login -> LoginScreen(
             store = viewModel.store,
             onLoggedIn = { screen = Screen.Chat },
             onBack = { screen = Screen.Settings },
+        )
+        Screen.Marketplace -> MarketplaceScreen(
+            viewModel = viewModel,
+            onBack = { screen = Screen.Chat },
         )
     }
 }

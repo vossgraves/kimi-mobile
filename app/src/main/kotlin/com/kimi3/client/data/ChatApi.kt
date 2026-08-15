@@ -18,13 +18,6 @@ import java.util.concurrent.TimeUnit
 data class ApiMessage(val role: String, val content: String)
 
 @Serializable
-private data class ChatRequest(
-    val model: String,
-    val messages: List<ApiMessage>,
-    val stream: Boolean = true,
-)
-
-@Serializable
 data class StreamChunk(
     val choices: List<StreamChoice> = emptyList(),
 )
@@ -40,6 +33,32 @@ data class StreamDelta(
     val content: String? = null,
     val reasoning_content: String? = null,
 )
+
+@Serializable
+private data class ChatRequestStreaming(
+    val model: String,
+    val messages: List<ApiMessage>,
+    val stream: Boolean = true,
+)
+
+@Serializable
+private data class ChatRequestComplete(
+    val model: String,
+    val messages: List<ApiMessage>,
+    val stream: Boolean = false,
+    val max_tokens: Int = 4096,
+)
+
+@Serializable
+private data class CompletionResponse(
+    val choices: List<CompletionChoice> = emptyList(),
+)
+
+@Serializable
+private data class CompletionChoice(val message: CompletionMessage? = null)
+
+@Serializable
+private data class CompletionMessage(val content: String? = null)
 
 @Serializable
 data class ErrorResponse(val error: ApiError? = null)
@@ -72,8 +91,8 @@ class ChatApi(
         messages: List<ApiMessage>,
     ): Flow<String> = callbackFlow {
         val body = JSON.encodeToString(
-            ChatRequest.serializer(),
-            ChatRequest(model = model, messages = messages)
+            ChatRequestStreaming.serializer(),
+            ChatRequestStreaming(model = model, messages = messages)
         ).toRequestBody("application/json".toMediaType())
 
         val request = Request.Builder()
@@ -121,6 +140,38 @@ class ChatApi(
         })
 
         awaitClose { call.cancel() }
+    }
+
+    /** Non-streaming completion — used by the agent loop and context compaction. */
+    suspend fun complete(
+        baseUrl: String,
+        token: String,
+        model: String,
+        messages: List<ApiMessage>,
+        maxTokens: Int = 4096,
+    ): String {
+        val body = JSON.encodeToString(
+            ChatRequestComplete.serializer(),
+            ChatRequestComplete(model = model, messages = messages, max_tokens = maxTokens)
+        ).toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url("${baseUrl.trimEnd('/')}/chat/completions")
+            .header("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val bodyText = response.body?.string().orEmpty()
+                val msg = runCatching {
+                    JSON.decodeFromString<ErrorResponse>(bodyText).error?.message
+                }.getOrNull()
+                throw IOException("HTTP ${response.code}: ${msg ?: bodyText.take(200)}")
+            }
+            val parsed = JSON.decodeFromString<CompletionResponse>(response.body!!.string())
+            return parsed.choices.firstOrNull()?.message?.content.orEmpty()
+        }
     }
 
     /** Quick connectivity check: list available models. Returns the model ids. */

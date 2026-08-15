@@ -11,9 +11,14 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.kimi3.client.data.CatalogType
+import com.kimi3.client.data.Marketplace
+import com.kimi3.client.data.SkillEngine
 import com.kimi3.client.ui.ChatMessage
+import com.kimi3.client.ui.ContextState
 import com.kimi3.client.ui.MessageRole
 import com.kimi3.client.ui.screens.ChatScreenContent
+import com.kimi3.client.ui.screens.MarketplaceScreenContent
 import com.kimi3.client.ui.theme.KimiTheme
 import org.junit.Rule
 import org.junit.Test
@@ -52,6 +57,9 @@ class ScreenshotTests {
         isStreaming: Boolean = false,
         dark: Boolean = false,
         name: String,
+        contextState: ContextState = ContextState(),
+        agentEnabled: Boolean = false,
+        installedSkills: Set<String> = emptySet(),
     ) {
         composeRule.setContent {
             KimiTheme(darkTheme = dark, dynamicColor = false) {
@@ -64,6 +72,10 @@ class ScreenshotTests {
                     onInputChange = { input = it },
                     onSend = {},
                     onOpenSettings = {},
+                    contextState = contextState,
+                    agentEnabled = agentEnabled,
+                    installedSkills = installedSkills,
+                    onOpenMarketplace = {},
                 )
             }
         }
@@ -119,4 +131,104 @@ class ScreenshotTests {
         isStreaming = true,
         name = "chat_streaming",
     )
+
+    // ---- Context ring & agent chrome ----
+
+    @Test
+    fun chatContextRingMid() = setChatContent(
+        listOf(
+            ChatMessage(role = MessageRole.USER, content = "Explain quantum computing simply"),
+            ChatMessage(
+                role = MessageRole.ASSISTANT,
+                content = "Quantum computing uses qubits, which can be in superposition…",
+            ),
+        ),
+        contextState = ContextState(tokens = 524_288, maxTokens = 1_048_576, pct = 0.5, messageCount = 2),
+        name = "chat_context_ring_mid",
+    )
+
+    @Test
+    fun chatContextRingHighDark() = setChatContent(
+        listOf(
+            ChatMessage(role = MessageRole.USER, content = "Keep going"),
+            ChatMessage(role = MessageRole.ASSISTANT, content = "Sure — here is the next section…"),
+        ),
+        dark = true,
+        contextState = ContextState(tokens = 900_000, maxTokens = 1_048_576, pct = 0.86, messageCount = 2),
+        name = "chat_context_ring_high_dark",
+    )
+
+    @Test
+    fun chatAgentMode() = setChatContent(
+        listOf(
+            ChatMessage(role = MessageRole.USER, content = "Find the latest Kimi K3 release notes"),
+            ChatMessage(
+                role = MessageRole.ASSISTANT,
+                content = "Let me search for that.\n\n```\nTOOL_CALL web_search: Kimi K3 release notes\n→ 1. Kimi K3: Moonshot's largest model…\n```\n\nHere's what I found…",
+                streaming = true,
+            ),
+        ),
+        isStreaming = true,
+        agentEnabled = true,
+        installedSkills = SkillEngine.all.map { it.id }.toSet(),
+        name = "chat_agent_mode",
+    )
+
+    @Test
+    fun chatCompactedNotice() = setChatContent(
+        listOf(
+            ChatMessage(
+                role = MessageRole.ASSISTANT,
+                content = "Earlier: discussed project setup, agreed on Kotlin + Compose, wrote the networking layer, and set up CI. Key decisions preserved below.",
+                notice = true,
+            ),
+            ChatMessage(role = MessageRole.USER, content = "Continue with the UI work"),
+            ChatMessage(role = MessageRole.ASSISTANT, content = "Next up: the theme. I'll go with a warm palette…"),
+        ),
+        name = "chat_compacted_notice",
+    )
+
+    // ---- Marketplace ----
+
+    @Test
+    fun marketplaceLight() {
+        val installed = setOf("web_search", "mcp_github")
+        composeRule.setContent {
+            KimiTheme(dynamicColor = false) {
+                MarketplaceScreenContent(
+                    items = Marketplace.catalog,
+                    installed = installed,
+                    query = "",
+                    category = null,
+                    categories = Marketplace.categories(),
+                    onQueryChange = {},
+                    onCategoryChange = {},
+                    onToggle = {},
+                    onBack = {},
+                )
+            }
+        }
+        capture("marketplace_light")
+    }
+
+    @Test
+    fun marketplaceConnectorsDark() {
+        val connectors = Marketplace.catalog.filter { it.type == CatalogType.CONNECTOR }
+        composeRule.setContent {
+            KimiTheme(darkTheme = true, dynamicColor = false) {
+                MarketplaceScreenContent(
+                    items = connectors,
+                    installed = setOf("mcp_fetch", "mcp_memory", "mcp_context7"),
+                    query = "",
+                    category = null,
+                    categories = Marketplace.categories(),
+                    onQueryChange = {},
+                    onCategoryChange = {},
+                    onToggle = {},
+                    onBack = {},
+                )
+            }
+        }
+        capture("marketplace_connectors_dark")
+    }
 }

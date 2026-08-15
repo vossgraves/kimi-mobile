@@ -1,8 +1,12 @@
 package com.kimi3.client.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -13,6 +17,17 @@ data class AppSettings(
     val baseUrl: String = "http://10.0.2.2:8000/v1",
     val token: String = "",
     val model: String = "kimi-k3",
+    // Context window management. kimi-k3 advertises 1M tokens; the web API
+    // doesn't report usage, so we estimate from characters and compare
+    // against this max (which the user can lower to match real free-tier
+    // limits, e.g. 128k).
+    val maxContextTokens: Long = 1_048_576L,
+    val autoCompact: Boolean = true,
+    val compactThresholdPct: Int = 80,
+    val agentEnabled: Boolean = false,
+    val installedSkills: Set<String> = setOf(
+        "web_search", "fetch_url", "wikipedia", "calculator", "datetime", "memory",
+    ),
 )
 
 class SettingsStore(private val context: Context) {
@@ -21,6 +36,11 @@ class SettingsStore(private val context: Context) {
         val BASE_URL = stringPreferencesKey("base_url")
         val TOKEN = stringPreferencesKey("token")
         val MODEL = stringPreferencesKey("model")
+        val MAX_CONTEXT_TOKENS = longPreferencesKey("max_context_tokens")
+        val AUTO_COMPACT = booleanPreferencesKey("auto_compact")
+        val COMPACT_THRESHOLD = intPreferencesKey("compact_threshold")
+        val AGENT_ENABLED = booleanPreferencesKey("agent_enabled")
+        val INSTALLED_SKILLS = stringSetPreferencesKey("installed_skills")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -28,6 +48,11 @@ class SettingsStore(private val context: Context) {
             baseUrl = prefs[Keys.BASE_URL] ?: AppSettings().baseUrl,
             token = prefs[Keys.TOKEN] ?: "",
             model = prefs[Keys.MODEL] ?: AppSettings().model,
+            maxContextTokens = prefs[Keys.MAX_CONTEXT_TOKENS] ?: AppSettings().maxContextTokens,
+            autoCompact = prefs[Keys.AUTO_COMPACT] ?: AppSettings().autoCompact,
+            compactThresholdPct = prefs[Keys.COMPACT_THRESHOLD] ?: AppSettings().compactThresholdPct,
+            agentEnabled = prefs[Keys.AGENT_ENABLED] ?: AppSettings().agentEnabled,
+            installedSkills = prefs[Keys.INSTALLED_SKILLS] ?: AppSettings().installedSkills,
         )
     }
 
@@ -50,5 +75,25 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.TOKEN)
         }
+    }
+
+    suspend fun setMaxContextTokens(max: Long) {
+        context.dataStore.edit { prefs -> prefs[Keys.MAX_CONTEXT_TOKENS] = max }
+    }
+
+    suspend fun setAutoCompact(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[Keys.AUTO_COMPACT] = enabled }
+    }
+
+    suspend fun setCompactThreshold(pct: Int) {
+        context.dataStore.edit { prefs -> prefs[Keys.COMPACT_THRESHOLD] = pct }
+    }
+
+    suspend fun setAgentEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[Keys.AGENT_ENABLED] = enabled }
+    }
+
+    suspend fun setInstalledSkills(skills: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[Keys.INSTALLED_SKILLS] = skills }
     }
 }
