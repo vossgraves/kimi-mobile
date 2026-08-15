@@ -10,7 +10,14 @@ import com.kimimobile.data.KimiModel
 import com.kimimobile.data.ModelCatalog
 import com.kimimobile.data.Models
 import com.kimimobile.data.SettingsStore
+import com.kimimobile.data.AgentMode
+import com.kimimobile.data.CapabilityRouter
 import com.kimimobile.data.CatalogType
+import com.kimimobile.data.Conversation
+import com.kimimobile.data.ConversationStore
+import com.kimimobile.data.ConversationSummary
+import com.kimimobile.data.ReasoningEffort
+import com.kimimobile.data.StoredMessage
 import com.kimimobile.data.Marketplace
 import com.kimimobile.data.Provider
 import com.kimimobile.data.SkillEngine
@@ -68,6 +75,11 @@ data class ContextState(
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     val store = SettingsStore(app)
+    val conversations = ConversationStore(app)
+
+    /** Conversation currently on screen; a new one until it's first saved. */
+    private val _activeConversationId = MutableStateFlow(java.util.UUID.randomUUID().toString())
+    val activeConversationId: StateFlow<String> = _activeConversationId.asStateFlow()
     val settings: StateFlow<AppSettings> =
         store.settings.stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
 
@@ -124,6 +136,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
+        viewModelScope.launch { conversations.refresh() }
         // Pull the real model list as soon as settings are available.
         viewModelScope.launch {
             settings.collect { cfg ->
@@ -258,26 +271,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        val mode = AgentMode.byId(cfg.agentMode)
         val mention = Subagents.parseMention(text)
         when {
             mention != null -> sendToSubagent(mention.first, mention.second, cfg)
-            cfg.agentEnabled -> sendAgent(text, cfg)
+            mode.usesTools -> sendAgent(text, cfg, mode)
             else -> sendChat(text, cfg, images)
         }
         clearImages()
     }
 
     private fun sendChat(text: String, cfg: AppSettings, images: List<String>) {
-        // Attachments imply vision: swap models for this turn rather than
-        // making you pick a vision model by hand.
-        val effectiveModel = if (images.isNotEmpty() &&
-            Models.byId(cfg.model)?.vision != true &&
-            Models.providerOf(cfg.model) == Provider.KIMI
-        ) {
-            Models.visionModelFor(cfg.maxContextTokens).id
-        } else {
-            cfg.model
-        }
         val userMsg = ChatMessage(
             role = MessageRole.USER,
             content = text.trim(),
@@ -287,22 +291,71 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _messages.update { it + userMsg + placeholder }
         refreshContext()
 
-        val history = _messages.value
-            .filter { it.id != placeholder.id && !it.failed }
-            .map { ApiMessage(role = it.role.name.lowercase(), content = it.content, images = it.images) }
-
         _isStreaming.value = true
         _isConnected.value = null
         viewModelScope.launch {
             try {
+                // Images: use the chosen model if it sees, otherwise borrow
+                // Kimi vision and feed its description back to the real model.
+                var describedImages: String? = null
+                if (images.isNotEmpty()) {
+                    val route = CapabilityRouter.routeVision(cfg.model, cfg)
+                    if (route == null) {
+                        finalizeAssistant(placeholder, CapabilityRouter.NO_VISION_HELP)
+                        return@launch
+                    }
+                    if (route.borrowed) {
+                        _tasks.value = listOf(
+                            AgentTask("Reading image with Kimi vision", TaskStatus.ACTIVE)
+                        )
+                        val description = api.complete(
+                            baseUrl = route.baseUrl,
+                            token = route.token,
+                            model = route.modelId,
+                            messages = listOf(
+                                ApiMessage(
+                                    role = "user",
+                                    content = CapabilityRouter.DESCRIBE_PROMPT,
+                                    images = images,
+                                )
+                            ),
+                            maxTokens = 1500,
+                        )
+                        describedImages = CapabilityRouter.describedContext(description)
+                        _tasks.update { list -> list.map { it.copy(status = TaskStatus.DONE) } }
+                    }
+                }
+
+                // When vision was borrowed the images become text, so the
+                // chosen model still answers the actual question.
+                val history = _messages.value
+                    .filter { it.id != placeholder.id && !it.failed }
+                    .map { msg ->
+                        val isLatestUser = msg.id == userMsg.id
+                        ApiMessage(
+                            role = msg.role.name.lowercase(),
+                            content = if (isLatestUser && describedImages != null) {
+                                buildString {
+                                    append(describedImages)
+                                    if (msg.content.isNotBlank()) append("\n\n").append(msg.content)
+                                }
+                            } else msg.content,
+                            images = if (describedImages != null) emptyList() else msg.images,
+                        )
+                    }
+
                 val model = Models.resolve(
-                    baseId = effectiveModel,
+                    baseId = cfg.model,
                     search = cfg.searchEnabled,
                     research = cfg.researchEnabled,
                     math = cfg.mathEnabled,
                 )
-                val (baseUrl, token) = endpointFor(effectiveModel, cfg)
-                api.streamChat(baseUrl, token, model, history).collect { chunkJson ->
+                val (baseUrl, token) = endpointFor(cfg.model, cfg)
+                // Only send effort to models that actually reason.
+                val effort = if (Models.byId(cfg.model)?.reasoning == true) {
+                    ReasoningEffort.byId(cfg.reasoningEffort).id
+                } else null
+                api.streamChat(baseUrl, token, model, history, effort).collect { chunkJson ->
                     val delta = runCatching {
                         json.decodeFromString<StreamChunk>(chunkJson).choices.firstOrNull()?.delta
                     }.getOrNull() ?: return@collect
@@ -327,13 +380,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 failPlaceholder(placeholder, e)
             } finally {
                 _isStreaming.value = false
+                _tasks.value = emptyList()
             }
         }
     }
 
     // ---- Agent mode (prompt-protocol tool loop) ------------------------------
 
-    private fun sendAgent(text: String, cfg: AppSettings) {
+    private fun sendAgent(text: String, cfg: AppSettings, mode: AgentMode) {
         val userMsg = ChatMessage(role = MessageRole.USER, content = text.trim())
         val placeholder = ChatMessage(role = MessageRole.ASSISTANT, content = "", streaming = true)
         _messages.update { it + userMsg + placeholder }
@@ -348,7 +402,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val model = resolvedModel(cfg)
                 val (baseUrl, token) = endpointFor(cfg.model, cfg)
                 val history = mutableListOf<ApiMessage>()
-                history += ApiMessage("system", agentSystemPrompt(cfg.installedSkills))
+                history += ApiMessage("system", agentSystemPrompt(cfg, mode))
                 history += _messages.value
                     .filter { it.id != placeholder.id && it.content.isNotBlank() }
                     .map { ApiMessage(role = it.role.name.lowercase(), content = it.content) }
@@ -426,7 +480,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 }
                             }
                         }
-                        val skill = SkillEngine.byId(id)
+                        val allowedTools = AgentMode.toolsFor(mode, cfg.installedSkills)
+                        val skill = SkillEngine.byId(id)?.takeIf { it.id in allowedTools }
                         val result = if (skill != null) {
                             runCatching { skill.run(args) }
                                 .getOrElse { "Error: ${it.message ?: "tool failed"}" }
@@ -638,13 +693,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun agentSystemPrompt(installed: Set<String>): String {
+    private fun agentSystemPrompt(cfg: AppSettings, mode: AgentMode): String {
+        val allowed = AgentMode.toolsFor(mode, cfg.installedSkills)
         val tools = SkillEngine.all
-            .filter { it.id in installed }
+            .filter { it.id in allowed }
             .joinToString("\n") { "- ${it.id}: ${it.description}" }
         return buildString {
-            append("You are a capable coding and research agent running on an Android client. ")
-            append("Solve the user's task step by step. You have tools for external information.\n")
+            append(mode.prompt).append("\n\n")
             append("PLAN PROTOCOL: before you start, list your steps, one per line:\n")
             append("PLAN: <short step description>\n")
             append("Then as you finish each step, output: STEP_DONE:<step number>\n")
@@ -653,6 +708,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             append("TOOL_CALL:<tool>|<args>\n")
             append("Available tools:\n")
             append(if (tools.isBlank()) "(none installed)" else tools)
+            if (!mode.canDelegate) return@buildString
             append("\n\nDELEGATION: for a self-contained chunk of work, hand it to a subagent:\n")
             append("DELEGATE:<handle>|<task>\n")
             append("Available subagents:\n")
@@ -748,6 +804,92 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Helpers ---------------------------------------------------------------
 
+    /** Writes the current thread to disk so it shows up in the drawer. */
+    private fun persistConversation() {
+        val snapshot = _messages.value
+        if (snapshot.isEmpty()) return
+        val id = _activeConversationId.value
+        val model = settings.value.model
+        viewModelScope.launch {
+            val existing = conversations.load(id)
+            conversations.save(
+                Conversation(
+                    id = id,
+                    title = existing?.title.orEmpty(),
+                    createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                    model = model,
+                    messages = snapshot.map { msg ->
+                        StoredMessage(
+                            id = msg.id,
+                            role = msg.role.name.lowercase(),
+                            content = msg.content,
+                            time = msg.time,
+                            reasoning = msg.reasoning,
+                            images = msg.images,
+                            notice = msg.notice,
+                            agentHandle = msg.agentHandle,
+                        )
+                    },
+                )
+            )
+        }
+    }
+
+    fun newConversation() {
+        persistConversation()
+        _activeConversationId.value = java.util.UUID.randomUUID().toString()
+        _messages.value = emptyList()
+        _tasks.value = emptyList()
+        _sessionSpend.value = SessionSpend()
+        clearImages()
+        refreshContext()
+    }
+
+    fun openConversation(id: String) {
+        persistConversation()
+        viewModelScope.launch {
+            val convo = conversations.load(id) ?: return@launch
+            _activeConversationId.value = convo.id
+            _messages.value = convo.messages.map { stored ->
+                ChatMessage(
+                    id = stored.id,
+                    role = if (stored.role == "user") MessageRole.USER else MessageRole.ASSISTANT,
+                    content = stored.content,
+                    time = stored.time,
+                    reasoning = stored.reasoning,
+                    images = stored.images,
+                    notice = stored.notice,
+                    agentHandle = stored.agentHandle,
+                )
+            }
+            _tasks.value = emptyList()
+            refreshContext()
+        }
+    }
+
+    fun deleteConversation(id: String) {
+        viewModelScope.launch {
+            conversations.delete(id)
+            if (id == _activeConversationId.value) newConversation()
+        }
+    }
+
+    fun setCustomMcpServers(servers: Set<String>) {
+        viewModelScope.launch { store.setCustomMcpServers(servers) }
+    }
+
+    fun setCustomRegistries(registries: Set<String>) {
+        viewModelScope.launch { store.setCustomRegistries(registries) }
+    }
+
+    fun setAgentMode(mode: AgentMode) {
+        viewModelScope.launch { store.setAgentMode(mode.id) }
+    }
+
+    fun setReasoningEffort(effort: ReasoningEffort) {
+        viewModelScope.launch { store.setReasoningEffort(effort.id) }
+    }
+
     private fun finalizeAssistant(placeholder: ChatMessage, error: String?) {
         _messages.update { list ->
             list.map {
@@ -758,6 +900,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         refreshContext()
         _isConnected.value = error == null
         if (error != null) _error.value = error
+        persistConversation()
     }
 
     private fun failPlaceholder(placeholder: ChatMessage, e: Exception) {

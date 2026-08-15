@@ -105,11 +105,14 @@ class ChatApi(
         messages: List<ApiMessage>,
         stream: Boolean,
         maxTokens: Int?,
+        effort: String? = null,
     ): String {
         val payload = buildJsonObject {
             put("model", model)
             put("stream", stream)
             if (maxTokens != null) put("max_tokens", maxTokens)
+            // Providers that don't know this parameter ignore it.
+            if (effort != null) put("reasoning_effort", effort)
             put("messages", buildJsonArray {
                 messages.forEach { msg ->
                     add(buildJsonObject {
@@ -145,8 +148,9 @@ class ChatApi(
         token: String,
         model: String,
         messages: List<ApiMessage>,
+        effort: String? = null,
     ): Flow<String> = callbackFlow {
-        val body = buildBody(model, messages, stream = true, maxTokens = null)
+        val body = buildBody(model, messages, stream = true, maxTokens = null, effort = effort)
             .toRequestBody("application/json".toMediaType())
 
         val request = Request.Builder()

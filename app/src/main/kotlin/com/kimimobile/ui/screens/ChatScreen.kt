@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
@@ -51,12 +52,14 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -68,6 +71,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -89,16 +93,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.kimimobile.data.AgentMode
 import com.kimimobile.data.ImageAttachments
 import com.kimimobile.data.Models
+import com.kimimobile.data.ReasoningEffort
 import com.kimimobile.data.SkillEngine
 import com.kimimobile.ui.ChatMessage
 import com.kimimobile.ui.ChatViewModel
 import com.kimimobile.ui.ContextState
-import com.kimimobile.ui.SessionSpend
 import com.kimimobile.ui.MessageRole
+import com.kimimobile.ui.SessionSpend
 import com.kimimobile.ui.components.AgentTask
+import com.kimimobile.ui.components.ChatDrawer
 import com.kimimobile.ui.components.MarkdownText
+import com.kimimobile.ui.components.ModelPickerSheet
 import com.kimimobile.ui.components.TaskListBar
 import com.kimimobile.ui.components.ThinkingBlock
 import com.kimimobile.ui.components.TypingIndicator
@@ -112,6 +120,9 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenMarketplace: () -> Unit,
 ) {
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val conversations by viewModel.conversations.conversations.collectAsState()
+    val activeConversationId by viewModel.activeConversationId.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -156,7 +167,30 @@ fun ChatScreen(
     LaunchedEffect(Unit) { viewModel.ensureConnected() }
 
     val currentModel = Models.byId(settings.model) ?: Models.default
+    val agentMode = AgentMode.byId(settings.agentMode)
 
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ChatDrawer(
+                conversations = conversations,
+                activeId = activeConversationId,
+                onNewChat = {
+                    viewModel.newConversation()
+                    scope.launch { drawerState.close() }
+                },
+                onOpenChat = { id ->
+                    viewModel.openConversation(id)
+                    scope.launch { drawerState.close() }
+                },
+                onDeleteChat = viewModel::deleteConversation,
+                onOpenSettings = {
+                    scope.launch { drawerState.close() }
+                    onOpenSettings()
+                },
+            )
+        },
+    ) {
     ChatScreenContent(
         messages = messages,
         isStreaming = isStreaming,
@@ -171,7 +205,6 @@ fun ChatScreen(
         snackbarHostState = snackbarHostState,
         contextState = contextState,
         isAgentTurn = isAgentTurn,
-        agentEnabled = settings.agentEnabled,
         modelName = currentModel.name,
         searchEnabled = settings.searchEnabled,
         researchEnabled = settings.researchEnabled,
@@ -191,7 +224,11 @@ fun ChatScreen(
         onOpenContextSheet = { showContextSheet = true },
         onOpenToolsSheet = { showToolsSheet = true },
         onOpenModelSheet = { showModelSheet = true },
+        agentMode = agentMode,
+        onOpenDrawer = { scope.launch { drawerState.open() } },
+        onNewChat = viewModel::newConversation,
     )
+    }
 
     if (signInRequired) {
         AlertDialog(
@@ -233,37 +270,172 @@ fun ChatScreen(
     }
 
     if (showModelSheet) {
-        ModelSheet(
+        ModelPickerSheet(
             models = availableModels
                 .filterNot { it.hidden }
                 .filter { !it.requiresKey || settings.zenApiKey.isNotBlank() },
             selectedId = settings.model,
+            effort = ReasoningEffort.byId(settings.reasoningEffort),
             onSelect = {
                 viewModel.setModel(it)
                 showModelSheet = false
             },
+            onEffortChange = viewModel::setReasoningEffort,
             onDismiss = { showModelSheet = false },
         )
     }
 
     if (showToolsSheet) {
-        ToolsSheet(
-            agentEnabled = settings.agentEnabled,
+        AgentModeSheet(
+            current = agentMode,
+            onSelect = {
+                viewModel.setAgentMode(it)
+                showToolsSheet = false
+            },
             searchEnabled = settings.searchEnabled,
             researchEnabled = settings.researchEnabled,
             mathEnabled = settings.mathEnabled,
-            installedSkills = settings.installedSkills,
-            onAgentToggle = viewModel::setAgentEnabled,
             onSearchToggle = viewModel::setSearchEnabled,
             onResearchToggle = viewModel::setResearchEnabled,
             onMathToggle = viewModel::setMathEnabled,
-            onToggleSkill = viewModel::toggleSkill,
             onOpenMarketplace = {
                 showToolsSheet = false
                 onOpenMarketplace()
             },
             onDismiss = { showToolsSheet = false },
         )
+    }
+}
+
+/**
+ * Agent mode picker — you choose how the model should work, not which
+ * checkboxes to tick. Kimi's own server-side capabilities stay as toggles
+ * because they're features of the request, not of the agent loop.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AgentModeSheet(
+    current: AgentMode,
+    onSelect: (AgentMode) -> Unit,
+    searchEnabled: Boolean,
+    researchEnabled: Boolean,
+    mathEnabled: Boolean,
+    onSearchToggle: (Boolean) -> Unit,
+    onResearchToggle: (Boolean) -> Unit,
+    onMathToggle: (Boolean) -> Unit,
+    onOpenMarketplace: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+        ) {
+            Text("Mode", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            AgentMode.entries.forEach { mode ->
+                Surface(
+                    onClick = { onSelect(mode) },
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (mode == current) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 3.dp),
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                mode.label,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (mode == current) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                mode.tagline,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (mode == current) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (mode == current) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = "Active",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Kimi features",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Run server-side by Kimi itself",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(6.dp))
+            CapabilityToggle(
+                title = "Web search",
+                subtitle = "Answers from live results with citations",
+                checked = searchEnabled,
+                enabled = !researchEnabled,
+                onCheckedChange = onSearchToggle,
+            )
+            CapabilityToggle(
+                title = "Deep research",
+                subtitle = "Multi-step research — slower, uses your daily quota",
+                checked = researchEnabled,
+                onCheckedChange = onResearchToggle,
+            )
+            CapabilityToggle(
+                title = "Math mode",
+                subtitle = "Step-by-step problem solving",
+                checked = mathEnabled,
+                onCheckedChange = onMathToggle,
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Surface(
+                onClick = onOpenMarketplace,
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Storefront,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Marketplace",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            "Tools, MCP servers and custom sources",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -298,6 +470,9 @@ fun ChatScreenContent(
     onOpenContextSheet: () -> Unit = {},
     onOpenToolsSheet: () -> Unit = {},
     onOpenModelSheet: () -> Unit = {},
+    agentMode: AgentMode = AgentMode.CHAT,
+    onOpenDrawer: () -> Unit = {},
+    onNewChat: () -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -355,7 +530,15 @@ fun ChatScreenContent(
                         }
                     }
                 },
+                navigationIcon = {
+                    IconButton(onClick = onOpenDrawer) {
+                        Icon(Icons.Default.Menu, contentDescription = "Recent chats")
+                    }
+                },
                 actions = {
+                    IconButton(onClick = onNewChat) {
+                        Icon(Icons.Default.Add, contentDescription = "New chat")
+                    }
                     if (onOpenSettings != null) {
                         IconButton(onClick = onOpenSettings) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -377,7 +560,7 @@ fun ChatScreenContent(
             ) {
                 // Active capability chips — always visible so nothing is silently on.
                 ActiveCapabilityRow(
-                    agentEnabled = agentEnabled,
+                    agentMode = agentMode,
                     searchEnabled = searchEnabled,
                     researchEnabled = researchEnabled,
                     mathEnabled = mathEnabled,
@@ -395,7 +578,7 @@ fun ChatScreenContent(
                     onInputChange = onInputChange,
                     onSend = onSend,
                     enabled = !isStreaming,
-                    agentEnabled = agentEnabled,
+                    agentEnabled = agentMode != AgentMode.CHAT,
                     pendingImages = pendingImages,
                     supportsVision = supportsVision,
                     onAttachImage = onAttachImage,
@@ -413,13 +596,13 @@ fun ChatScreenContent(
 
 @Composable
 private fun ActiveCapabilityRow(
-    agentEnabled: Boolean,
+    agentMode: AgentMode,
     searchEnabled: Boolean,
     researchEnabled: Boolean,
     mathEnabled: Boolean,
 ) {
     val active = buildList {
-        if (agentEnabled) add("Agent" to Icons.Default.Science)
+        if (agentMode != AgentMode.CHAT) add(agentMode.label to Icons.Default.Science)
         if (researchEnabled) add("Deep research" to Icons.Default.TravelExplore)
         else if (searchEnabled) add("Web search" to Icons.Default.TravelExplore)
         if (mathEnabled) add("Math" to Icons.Default.Calculate)
@@ -681,132 +864,6 @@ private fun CapabilityTag(text: String) {
             color = MaterialTheme.colorScheme.onTertiaryContainer,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
-    }
-}
-
-// ---- Tools sheet -------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ToolsSheet(
-    agentEnabled: Boolean,
-    searchEnabled: Boolean,
-    researchEnabled: Boolean,
-    mathEnabled: Boolean,
-    installedSkills: Set<String>,
-    onAgentToggle: (Boolean) -> Unit,
-    onSearchToggle: (Boolean) -> Unit,
-    onResearchToggle: (Boolean) -> Unit,
-    onMathToggle: (Boolean) -> Unit,
-    onToggleSkill: (String) -> Unit,
-    onOpenMarketplace: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
-        ) {
-            Text(
-                "Kimi capabilities",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                "Run server-side by Kimi itself",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            CapabilityToggle(
-                title = "Web search",
-                subtitle = "Answer from live results with citations",
-                checked = searchEnabled,
-                enabled = !researchEnabled,
-                onCheckedChange = onSearchToggle,
-            )
-            CapabilityToggle(
-                title = "Deep research",
-                subtitle = "Multi-step research — slower, uses your daily research quota",
-                checked = researchEnabled,
-                onCheckedChange = onResearchToggle,
-            )
-            CapabilityToggle(
-                title = "Math mode",
-                subtitle = "Step-by-step problem solving",
-                checked = mathEnabled,
-                onCheckedChange = onMathToggle,
-            )
-
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                "On-device agent",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            CapabilityToggle(
-                title = "Agent mode",
-                subtitle = "The model calls local tools in a loop to finish tasks",
-                checked = agentEnabled,
-                onCheckedChange = onAgentToggle,
-            )
-            if (agentEnabled) {
-                SkillEngine.all.forEach { skill ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = 8.dp, top = 2.dp, bottom = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(skill.name, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                skill.description,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Switch(
-                            checked = skill.id in installedSkills,
-                            onCheckedChange = { onToggleSkill(skill.id) },
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Surface(
-                onClick = onOpenMarketplace,
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Storefront,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Marketplace", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                        Text(
-                            "Skills, connectors & MCP servers",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 

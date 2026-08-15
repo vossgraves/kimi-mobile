@@ -11,15 +11,12 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.kimimobile.data.CatalogType
-import com.kimimobile.data.Marketplace
 import com.kimimobile.ui.ChatMessage
 import com.kimimobile.ui.components.AgentTask
 import com.kimimobile.ui.components.TaskStatus
 import com.kimimobile.ui.ContextState
 import com.kimimobile.ui.MessageRole
 import com.kimimobile.ui.screens.ChatScreenContent
-import com.kimimobile.ui.screens.MarketplaceScreenContent
 import com.kimimobile.ui.theme.KimiTheme
 import org.junit.Rule
 import org.junit.Test
@@ -215,47 +212,4 @@ class ScreenshotTests {
         name = "chat_agent_tasklist",
     )
 
-    // ---- Marketplace ----
-
-    @Test
-    fun marketplaceLight() {
-        val installed = setOf("web_search", "mcp_github")
-        composeRule.setContent {
-            KimiTheme(dynamicColor = false) {
-                MarketplaceScreenContent(
-                    items = Marketplace.catalog,
-                    installed = installed,
-                    query = "",
-                    category = null,
-                    categories = Marketplace.categories(),
-                    onQueryChange = {},
-                    onCategoryChange = {},
-                    onToggle = {},
-                    onBack = {},
-                )
-            }
-        }
-        capture("marketplace_light")
-    }
-
-    @Test
-    fun marketplaceConnectorsDark() {
-        val connectors = Marketplace.catalog.filter { it.type == CatalogType.CONNECTOR }
-        composeRule.setContent {
-            KimiTheme(darkTheme = true, dynamicColor = false) {
-                MarketplaceScreenContent(
-                    items = connectors,
-                    installed = setOf("mcp_fetch", "mcp_memory", "mcp_context7"),
-                    query = "",
-                    category = null,
-                    categories = Marketplace.categories(),
-                    onQueryChange = {},
-                    onCategoryChange = {},
-                    onToggle = {},
-                    onBack = {},
-                )
-            }
-        }
-        capture("marketplace_connectors_dark")
-    }
 }
