@@ -92,6 +92,19 @@ object Models {
             description = "Long text generation",
             contextTokens = 32_768,
         ),
+        KimiModel(
+            id = "moonshot-v1-8k-vision-preview",
+            name = "Vision 8K",
+            description = "Image + text analysis, 8k context",
+            contextTokens = 8_192,
+            vision = true,
+        ),
+        KimiModel(
+            id = "moonshot-v1-8k",
+            name = "Moonshot 8K",
+            description = "Short text generation",
+            contextTokens = 8_192,
+        ),
     )
 
     /**

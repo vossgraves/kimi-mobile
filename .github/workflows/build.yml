@@ -17,17 +17,27 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # APK first and published immediately: a failing screenshot test should
+      # never stop you from installing the build.
       - name: Build APK
         run: ./gradlew assembleDebug --stacktrace
 
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
       - name: Run tests
         id: tests
+        continue-on-error: true
         run: ./gradlew testDebugUnitTest --stacktrace
 
       # Gradle's console output truncates test exceptions to one line, so the
-      # actual cause only exists in the XML reports. Print them on failure.
+      # real cause only exists in the XML reports.
       - name: Print test failures
-        if: failure()
+        if: steps.tests.outcome == 'failure'
         run: |
           echo "::group::Failure details"
           for f in app/build/test-results/testDebugUnitTest/*.xml; do
@@ -41,11 +51,19 @@ jobs:
               for bad in list(case.iter('failure')) + list(case.iter('error')):
                   print(f"\n### {case.get('classname')}.{case.get('name')}")
                   print((bad.get('message') or '').strip()[:600])
-                  print((bad.text or '').strip()[:2500])
+                  print((bad.text or '').strip()[:2000])
           PY
             fi
           done
           echo "::endgroup::"
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: app/build/screenshots/**
+          if-no-files-found: ignore
 
       - name: Upload test reports
         if: always()
@@ -57,18 +75,9 @@ jobs:
             app/build/test-results/**
           if-no-files-found: ignore
 
-      - name: Upload APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: ignore
-
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: app/build/screenshots/**
-          if-no-files-found: ignore
+      # Surface test status without blocking the APK artifact.
+      - name: Fail if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: |
+          echo "APK is published above; tests still need fixing."
+          exit 1
