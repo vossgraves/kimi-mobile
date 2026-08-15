@@ -52,7 +52,7 @@ server/       Kimi web-API proxy (kimi-free-api, patched for kimi.com)
 
 ```bash
 ./gradlew assembleDebug                  # build
-./gradlew recordDebugScreenshotTest      # render UI screenshots to app/screenshots/debug
+./gradlew testDebugUnitTest              # render UI screenshots to app/build/screenshots
 ```
 
 New UI screens land in the `screenshots` CI artifact — check them before trusting a change.

@@ -1,14 +1,16 @@
 package com.kimi3.client
 
+import android.graphics.Bitmap
+import android.graphics.Color
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.android.compose.screenshot.Screenshot
 import com.kimi3.client.ui.ChatMessage
 import com.kimi3.client.ui.MessageRole
 import com.kimi3.client.ui.screens.ChatScreenContent
@@ -16,10 +18,12 @@ import com.kimi3.client.ui.theme.KimiTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
+import java.io.FileOutputStream
 
 /**
- * Screenshot tests — rendered by the compose-screenshot plugin (Robolectric).
- * Artifacts land in app/screenshots/debug; verify visually in CI.
+ * Renders the chat UI on the JVM (Robolectric) and writes PNGs to app/build/screenshots.
+ * Verify the UI visually from the CI artifact.
  */
 @RunWith(AndroidJUnit4::class)
 class ScreenshotTests {
@@ -27,10 +31,27 @@ class ScreenshotTests {
     @get:Rule
     val composeRule = createComposeRule()
 
+    private fun capture(name: String) {
+        composeRule.waitForIdle()
+        val bitmap: Bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
+
+        // Guard: a blank render (all one color) is a failure signal, not a screenshot.
+        val sample = bitmap.getPixel(bitmap.width / 2, bitmap.height / 2)
+        check(!(bitmap.width < 50 || bitmap.height < 50 || sample == Color.TRANSPARENT)) {
+            "Screenshot $name came out blank — composable didn't render"
+        }
+
+        val dir = File("build/screenshots").apply { mkdirs() }
+        FileOutputStream(File(dir, "$name.png")).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+    }
+
     private fun setChatContent(
         messages: List<ChatMessage>,
         isStreaming: Boolean = false,
         dark: Boolean = false,
+        name: String,
     ) {
         composeRule.setContent {
             KimiTheme(darkTheme = dark, dynamicColor = false) {
@@ -46,8 +67,7 @@ class ScreenshotTests {
                 )
             }
         }
-        composeRule.waitForIdle()
-        composeRule.onRoot().captureToImage()
+        capture(name)
     }
 
     private val sampleCodeAnswer = """
@@ -66,39 +86,37 @@ class ScreenshotTests {
     """.trimIndent()
 
     @Test
-    @Screenshot(name = "chat_empty_light")
-    fun chatEmptyLight() = setChatContent(emptyList())
+    fun chatEmptyLight() = setChatContent(emptyList(), name = "chat_empty_light")
 
     @Test
-    @Screenshot(name = "chat_empty_dark")
-    fun chatEmptyDark() = setChatContent(emptyList(), dark = true)
+    fun chatEmptyDark() = setChatContent(emptyList(), dark = true, name = "chat_empty_dark")
 
     @Test
-    @Screenshot(name = "chat_markdown_code_light")
     fun chatMarkdownLight() = setChatContent(
         listOf(
             ChatMessage(role = MessageRole.USER, content = "Write a Python function that reverses a string"),
             ChatMessage(role = MessageRole.ASSISTANT, content = sampleCodeAnswer),
-        )
+        ),
+        name = "chat_markdown_light",
     )
 
     @Test
-    @Screenshot(name = "chat_markdown_code_dark")
     fun chatMarkdownDark() = setChatContent(
         listOf(
             ChatMessage(role = MessageRole.USER, content = "Write a Python function that reverses a string"),
             ChatMessage(role = MessageRole.ASSISTANT, content = sampleCodeAnswer),
         ),
         dark = true,
+        name = "chat_markdown_dark",
     )
 
     @Test
-    @Screenshot(name = "chat_streaming_light")
-    fun chatStreamingLight() = setChatContent(
+    fun chatStreaming() = setChatContent(
         listOf(
             ChatMessage(role = MessageRole.USER, content = "Explain quantum computing simply"),
             ChatMessage(role = MessageRole.ASSISTANT, content = "", streaming = true),
         ),
         isStreaming = true,
+        name = "chat_streaming",
     )
 }
