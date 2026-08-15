@@ -1,15 +1,13 @@
 package com.kimimobile.ui.screens
 
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,51 +27,30 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Science
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Storefront
-import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -94,7 +71,6 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,21 +78,27 @@ import coil.compose.AsyncImage
 import com.kimimobile.data.AgentMode
 import com.kimimobile.data.ImageAttachments
 import com.kimimobile.data.Models
+import com.kimimobile.data.Provider
 import com.kimimobile.data.ReasoningEffort
-import com.kimimobile.data.SkillEngine
 import com.kimimobile.ui.ChatMessage
 import com.kimimobile.ui.ChatViewModel
 import com.kimimobile.ui.ContextState
 import com.kimimobile.ui.MessageRole
-import com.kimimobile.ui.SessionSpend
 import com.kimimobile.ui.components.AgentTask
 import com.kimimobile.ui.components.ChatDrawer
+import com.kimimobile.ui.components.ClaudeDivider
+import com.kimimobile.ui.components.ClaudeGroup
+import com.kimimobile.ui.components.ClaudeRow
+import com.kimimobile.ui.components.ClaudeToggle
+import com.kimimobile.ui.components.Composer
+import com.kimimobile.ui.components.FloatingContextRing
 import com.kimimobile.ui.components.MarkdownText
 import com.kimimobile.ui.components.ModelPickerSheet
+import com.kimimobile.ui.components.SheetHeader
 import com.kimimobile.ui.components.TaskListBar
 import com.kimimobile.ui.components.ThinkingBlock
 import com.kimimobile.ui.components.TypingIndicator
-import java.util.Locale
+import com.kimimobile.ui.theme.Claude
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,39 +108,41 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenMarketplace: () -> Unit,
 ) {
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val conversations by viewModel.conversations.conversations.collectAsState()
-    val activeConversationId by viewModel.activeConversationId.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+
     val messages by viewModel.messages.collectAsState()
     val isStreaming by viewModel.isStreaming.collectAsState()
     val isAgentTurn by viewModel.isAgentTurn.collectAsState()
     val isCompacting by viewModel.isCompacting.collectAsState()
     val error by viewModel.error.collectAsState()
-    val isConnected by viewModel.isConnected.collectAsState()
     val contextState by viewModel.contextState.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val pendingImages by viewModel.pendingImages.collectAsState()
     val tasks by viewModel.tasks.collectAsState()
     val signInRequired by viewModel.signInRequired.collectAsState()
-    val sessionSpend by viewModel.sessionSpend.collectAsState()
     val availableModels by viewModel.availableModels.collectAsState()
+    val conversations by viewModel.conversations.conversations.collectAsState()
+    val activeConversationId by viewModel.activeConversationId.collectAsState()
 
     var input by rememberSaveable { mutableStateOf("") }
-    var showContextSheet by rememberSaveable { mutableStateOf(false) }
-    var showToolsSheet by rememberSaveable { mutableStateOf(false) }
-    var showModelSheet by rememberSaveable { mutableStateOf(false) }
+    var sheet by remember { mutableStateOf<Sheet?>(null) }
+
+    val addSheetState = rememberModalBottomSheetState()
+    val modelSheetState = rememberModalBottomSheetState()
+    val contextSheetState = rememberModalBottomSheetState()
+    val modeSheetState = rememberModalBottomSheetState()
 
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
+    ) { uri ->
         if (uri != null) {
             scope.launch {
                 ImageAttachments.toDataUrl(context, uri)
                     .onSuccess(viewModel::attachImage)
-                    .onFailure { snackbarHostState.showSnackbar(it.message ?: "Couldn't attach image") }
+                    .onFailure { snackbarHostState.showSnackbar(it.message ?: "Couldn't attach") }
             }
         }
     }
@@ -169,11 +153,11 @@ fun ChatScreen(
             viewModel.clearError()
         }
     }
-
     LaunchedEffect(Unit) { viewModel.ensureConnected() }
 
-    val currentModel = Models.byId(settings.model) ?: Models.default
+    val currentModel = Models.byId(settings.model)
     val agentMode = AgentMode.byId(settings.agentMode)
+    val effort = ReasoningEffort.byId(settings.reasoningEffort)
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -190,6 +174,10 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                 },
                 onDeleteChat = viewModel::deleteConversation,
+                onOpenMarketplace = {
+                    scope.launch { drawerState.close() }
+                    onOpenMarketplace()
+                },
                 onOpenSettings = {
                     scope.launch { drawerState.close() }
                     onOpenSettings()
@@ -197,54 +185,129 @@ fun ChatScreen(
             )
         },
     ) {
-    ChatScreenContent(
-        messages = messages,
-        isStreaming = isStreaming,
-        isConnected = isConnected,
-        input = input,
-        onInputChange = { input = it },
-        onSend = {
-            viewModel.send(input)
-            input = ""
-        },
-        onOpenSettings = onOpenSettings,
-        snackbarHostState = snackbarHostState,
-        contextState = contextState,
-        isAgentTurn = isAgentTurn,
-        modelName = currentModel.name,
-        searchEnabled = settings.searchEnabled,
-        researchEnabled = settings.researchEnabled,
-        mathEnabled = settings.mathEnabled,
-        pendingImages = pendingImages,
-        tasks = tasks,
-        sessionSpend = sessionSpend,
-        isZenModel = currentModel.provider == com.kimimobile.data.Provider.ZEN,
-        supportsVision = currentModel.vision,
-        onAttachImage = {
-            imagePicker.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            )
-        },
-        onRemoveImage = viewModel::removeImage,
-        onRetry = viewModel::retryLast,
-        onOpenContextSheet = { showContextSheet = true },
-        onOpenToolsSheet = { showToolsSheet = true },
-        onOpenModelSheet = { showModelSheet = true },
-        agentMode = agentMode,
-        onOpenDrawer = { scope.launch { drawerState.open() } },
-        onNewChat = viewModel::newConversation,
-    )
+        ChatScreenContent(
+            messages = messages,
+            isStreaming = isStreaming,
+            isAgentTurn = isAgentTurn,
+            input = input,
+            onInputChange = { input = it },
+            onSend = {
+                viewModel.send(input)
+                input = ""
+            },
+            onStop = viewModel::stopStreaming,
+            snackbarHostState = snackbarHostState,
+            contextState = contextState,
+            tasks = tasks,
+            pendingImages = pendingImages,
+            modelLabel = currentModel?.name ?: settings.model,
+            modelSuffix = when {
+                agentMode != AgentMode.CHAT -> agentMode.label
+                currentModel?.reasoning == true -> effort.label
+                else -> null
+            },
+            onRemoveImage = viewModel::removeImage,
+            onRetry = viewModel::retryLast,
+            onOpenDrawer = { scope.launch { drawerState.open() } },
+            onNewChat = viewModel::newConversation,
+            onOpenAdd = { sheet = Sheet.ADD },
+            onOpenModel = { sheet = Sheet.MODEL },
+            onOpenContext = { sheet = Sheet.CONTEXT },
+        )
+    }
+
+    when (sheet) {
+        Sheet.ADD -> AddToChatSheet(
+            sheetState = addSheetState,
+            agentMode = agentMode,
+            searchEnabled = settings.searchEnabled,
+            researchEnabled = settings.researchEnabled,
+            connectorCount = settings.customMcpServers.size,
+            onPickPhoto = {
+                sheet = null
+                imagePicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onTakePhoto = {
+                sheet = null
+                imagePicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onPickFile = {
+                sheet = null
+                imagePicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onSearchToggle = viewModel::setSearchEnabled,
+            onResearchToggle = viewModel::setResearchEnabled,
+            onOpenModes = { sheet = Sheet.MODE },
+            onOpenConnectors = {
+                sheet = null
+                onOpenMarketplace()
+            },
+            onDismiss = { sheet = null },
+        )
+
+        Sheet.MODE -> ModeSheet(
+            sheetState = modeSheetState,
+            current = agentMode,
+            onSelect = {
+                viewModel.setAgentMode(it)
+                sheet = null
+            },
+            onDismiss = { sheet = null },
+        )
+
+        Sheet.MODEL -> ModelPickerSheet(
+            sheetState = modelSheetState,
+            models = availableModels.filterNot { it.hidden }.filter { model ->
+                when {
+                    model.provider == Provider.KIMI -> settings.token.isNotBlank()
+                    model.requiresKey -> settings.zenApiKey.isNotBlank()
+                    else -> true
+                }
+            },
+            selectedId = settings.model,
+            effort = effort,
+            kimiHidden = settings.token.isBlank(),
+            onSelect = {
+                viewModel.setModel(it)
+                sheet = null
+            },
+            onEffortChange = viewModel::setReasoningEffort,
+            onDismiss = { sheet = null },
+        )
+
+        Sheet.CONTEXT -> ContextSheet(
+            sheetState = contextSheetState,
+            context = contextState,
+            isCompacting = isCompacting,
+            autoCompact = settings.autoCompact,
+            thresholdPct = settings.compactThresholdPct,
+            onAutoCompactChange = viewModel::setAutoCompact,
+            onThresholdChange = viewModel::setCompactThreshold,
+            onCompactNow = {
+                viewModel.compactNow()
+                sheet = null
+            },
+            onDismiss = { sheet = null },
+        )
+
+        null -> Unit
     }
 
     if (signInRequired) {
         AlertDialog(
             onDismissRequest = viewModel::dismissSignIn,
-            icon = { Icon(Icons.Default.Lock, contentDescription = null) },
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
             title = { Text("Sign in to use Kimi") },
             text = {
                 Text(
-                    "Kimi models need your account. Sign in with your browser, or switch " +
-                        "to a free OpenCode Zen model, which needs no account at all."
+                    "Kimi models need your account. Sign in, or switch to a free " +
+                        "OpenCode Zen model that needs no account."
                 )
             },
             confirmButton = {
@@ -256,238 +319,39 @@ fun ChatScreen(
             dismissButton = {
                 TextButton(onClick = {
                     viewModel.dismissSignIn()
-                    showModelSheet = true
+                    sheet = Sheet.MODEL
                 }) { Text("Use a free model") }
             },
         )
     }
-
-    if (showContextSheet) {
-        ContextSheet(
-            context = contextState,
-            isCompacting = isCompacting,
-            autoCompact = settings.autoCompact,
-            thresholdPct = settings.compactThresholdPct,
-            onAutoCompactChange = viewModel::setAutoCompact,
-            onThresholdChange = viewModel::setCompactThreshold,
-            onCompactNow = viewModel::compactNow,
-            onDismiss = { showContextSheet = false },
-        )
-    }
-
-    if (showModelSheet) {
-        ModelPickerSheet(
-            // Only models that can actually answer right now: Kimi needs a
-            // token, paid Zen needs a key, free Zen always works.
-            models = availableModels.filterNot { it.hidden }.filter { model ->
-                when {
-                    model.provider == com.kimimobile.data.Provider.KIMI ->
-                        settings.token.isNotBlank()
-                    model.requiresKey -> settings.zenApiKey.isNotBlank()
-                    else -> true
-                }
-            },
-            kimiHidden = settings.token.isBlank(),
-            hasZenKey = settings.zenApiKey.isNotBlank(),
-            selectedId = settings.model,
-            effort = ReasoningEffort.byId(settings.reasoningEffort),
-            onSelect = {
-                viewModel.setModel(it)
-                showModelSheet = false
-            },
-            onEffortChange = viewModel::setReasoningEffort,
-            onDismiss = { showModelSheet = false },
-        )
-    }
-
-    if (showToolsSheet) {
-        AgentModeSheet(
-            current = agentMode,
-            onSelect = {
-                viewModel.setAgentMode(it)
-                showToolsSheet = false
-            },
-            searchEnabled = settings.searchEnabled,
-            researchEnabled = settings.researchEnabled,
-            mathEnabled = settings.mathEnabled,
-            onSearchToggle = viewModel::setSearchEnabled,
-            onResearchToggle = viewModel::setResearchEnabled,
-            onMathToggle = viewModel::setMathEnabled,
-            onOpenMarketplace = {
-                showToolsSheet = false
-                onOpenMarketplace()
-            },
-            onDismiss = { showToolsSheet = false },
-        )
-    }
 }
 
-/**
- * Agent mode picker — you choose how the model should work, not which
- * checkboxes to tick. Kimi's own server-side capabilities stay as toggles
- * because they're features of the request, not of the agent loop.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AgentModeSheet(
-    current: AgentMode,
-    onSelect: (AgentMode) -> Unit,
-    searchEnabled: Boolean,
-    researchEnabled: Boolean,
-    mathEnabled: Boolean,
-    onSearchToggle: (Boolean) -> Unit,
-    onResearchToggle: (Boolean) -> Unit,
-    onMathToggle: (Boolean) -> Unit,
-    onOpenMarketplace: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
-        ) {
-            Text("Mode", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(10.dp))
-            AgentMode.entries.forEach { mode ->
-                Surface(
-                    onClick = { onSelect(mode) },
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (mode == current) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceContainerLow,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 3.dp),
-                ) {
-                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                mode.label,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (mode == current) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                mode.tagline,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (mode == current) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (mode == current) {
-                            Icon(
-                                Icons.Default.Check,
-                                contentDescription = "Active",
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
-                        }
-                    }
-                }
-            }
+private enum class Sheet { ADD, MODE, MODEL, CONTEXT }
 
-            Spacer(Modifier.height(14.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "Kimi features",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                "Run server-side by Kimi itself",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(6.dp))
-            CapabilityToggle(
-                title = "Web search",
-                subtitle = "Answers from live results with citations",
-                checked = searchEnabled,
-                enabled = !researchEnabled,
-                onCheckedChange = onSearchToggle,
-            )
-            CapabilityToggle(
-                title = "Deep research",
-                subtitle = "Multi-step research — slower, uses your daily quota",
-                checked = researchEnabled,
-                onCheckedChange = onResearchToggle,
-            )
-            CapabilityToggle(
-                title = "Math mode",
-                subtitle = "Step-by-step problem solving",
-                checked = mathEnabled,
-                onCheckedChange = onMathToggle,
-            )
-
-            Spacer(Modifier.height(12.dp))
-            Surface(
-                onClick = onOpenMarketplace,
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Storefront,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Marketplace",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        Text(
-                            "Tools, MCP servers and custom sources",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Stateless chat UI — safe to preview/screenshot with fake data. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreenContent(
     messages: List<ChatMessage>,
     isStreaming: Boolean,
-    isConnected: Boolean?,
     input: String,
     onInputChange: (String) -> Unit,
     onSend: () -> Unit,
-    onOpenSettings: (() -> Unit)? = null,
-    snackbarHostState: SnackbarHostState? = null,
     modifier: Modifier = Modifier,
-    contextState: ContextState = ContextState(),
     isAgentTurn: Boolean = false,
-    agentEnabled: Boolean = false,
-    modelName: String = "K2 · 0905",
-    searchEnabled: Boolean = false,
-    researchEnabled: Boolean = false,
-    mathEnabled: Boolean = false,
-    pendingImages: List<String> = emptyList(),
+    onStop: () -> Unit = {},
+    snackbarHostState: SnackbarHostState? = null,
+    contextState: ContextState = ContextState(),
     tasks: List<AgentTask> = emptyList(),
-    sessionSpend: SessionSpend = SessionSpend(),
-    isZenModel: Boolean = false,
-    supportsVision: Boolean = false,
-    onAttachImage: () -> Unit = {},
+    pendingImages: List<String> = emptyList(),
+    modelLabel: String = "Kimi K3",
+    modelSuffix: String? = null,
     onRemoveImage: (String) -> Unit = {},
     onRetry: () -> Unit = {},
-    onOpenContextSheet: () -> Unit = {},
-    onOpenToolsSheet: () -> Unit = {},
-    onOpenModelSheet: () -> Unit = {},
-    agentMode: AgentMode = AgentMode.CHAT,
     onOpenDrawer: () -> Unit = {},
     onNewChat: () -> Unit = {},
+    onOpenAdd: () -> Unit = {},
+    onOpenModel: () -> Unit = {},
+    onOpenContext: () -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -495,205 +359,87 @@ fun ChatScreenContent(
         snackbarHost = { if (snackbarHostState != null) SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = {
-                    // Model pill doubles as the status line — tap to switch models.
-                    Surface(
-                        onClick = onOpenModelSheet,
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            val dotColor = when {
-                                isStreaming -> MaterialTheme.colorScheme.tertiary
-                                isConnected == true -> MaterialTheme.colorScheme.primary
-                                else -> MaterialTheme.colorScheme.outlineVariant
-                            }
-                            Box(
-                                Modifier
-                                    .size(7.dp)
-                                    .clip(CircleShape)
-                                    .background(dotColor)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    modelName,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text(
-                                    text = when {
-                                        isStreaming && isAgentTurn -> "agent working…"
-                                        isStreaming -> "responding…"
-                                        isConnected == true -> "connected"
-                                        else -> "tap to choose model"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                Icons.Default.ExpandMore,
-                                contentDescription = "Switch model",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
-                },
+                title = {},
                 navigationIcon = {
                     IconButton(onClick = onOpenDrawer) {
-                        Icon(Icons.Default.Menu, contentDescription = "Recent chats")
+                        Icon(
+                            Icons.Default.Menu,
+                            contentDescription = "Menu",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 },
                 actions = {
                     IconButton(onClick = onNewChat) {
-                        Icon(Icons.Default.Add, contentDescription = "New chat")
-                    }
-                    if (onOpenSettings != null) {
-                        IconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
-                        }
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "New chat",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
-        Box(
+        Column(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .imePadding(),
         ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .imePadding(),
-            ) {
-                // Active capability chips — always visible so nothing is silently on.
-                ActiveCapabilityRow(
-                    agentMode = agentMode,
-                    searchEnabled = searchEnabled,
-                    researchEnabled = researchEnabled,
-                    mathEnabled = mathEnabled,
-                )
-                ChatMessageList(
-                    messages = messages,
-                    isStreaming = isStreaming,
-                    onRetry = onRetry,
-                    modifier = Modifier.weight(1f),
-                )
-                // v0-style plan tracker, docked directly above the composer.
-                TaskListBar(tasks = tasks)
-                Composer(
-                    input = input,
-                    onInputChange = onInputChange,
-                    onSend = onSend,
-                    enabled = !isStreaming,
-                    agentEnabled = agentMode != AgentMode.CHAT,
-                    pendingImages = pendingImages,
-                    supportsVision = supportsVision,
-                    onAttachImage = onAttachImage,
-                    onRemoveImage = onRemoveImage,
-                    onOpenToolsSheet = onOpenToolsSheet,
-                    contextState = contextState,
-                    onOpenContextSheet = onOpenContextSheet,
-                    sessionSpend = sessionSpend,
-                    isZenModel = isZenModel,
-                )
+            Box(Modifier.weight(1f)) {
+                if (messages.isEmpty()) {
+                    EmptyState()
+                } else {
+                    ChatMessageList(
+                        messages = messages,
+                        isStreaming = isStreaming,
+                        onRetry = onRetry,
+                    )
+                }
+
+                // Context ring floats over the conversation, bottom-left,
+                // independent of the composer.
+                if (contextState.tokens > 0) {
+                    FloatingContextRing(
+                        pct = contextState.pct,
+                        onClick = onOpenContext,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(start = 16.dp, bottom = 8.dp),
+                    )
+                }
             }
-        }
-    }
-}
 
-@Composable
-private fun ActiveCapabilityRow(
-    agentMode: AgentMode,
-    searchEnabled: Boolean,
-    researchEnabled: Boolean,
-    mathEnabled: Boolean,
-) {
-    val active = buildList {
-        if (agentMode != AgentMode.CHAT) add(agentMode.label to Icons.Default.Science)
-        if (researchEnabled) add("Deep research" to Icons.Default.TravelExplore)
-        else if (searchEnabled) add("Web search" to Icons.Default.TravelExplore)
-        if (mathEnabled) add("Math" to Icons.Default.Calculate)
-    }
-    AnimatedVisibility(
-        visible = active.isNotEmpty(),
-        enter = fadeIn() + slideInVertically(),
-        exit = fadeOut(),
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            active.forEach { (label, icon) ->
-                AssistChip(
-                    onClick = {},
-                    label = { Text(label, style = MaterialTheme.typography.labelSmall) },
-                    leadingIcon = {
-                        Icon(icon, contentDescription = null, Modifier.size(14.dp))
-                    },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        labelColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                        leadingIconContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                    ),
-                )
-            }
-        }
-    }
-}
+            TaskListBar(tasks = tasks)
 
-// ---- Context ring & sheet ----------------------------------------------------
-
-@Composable
-private fun ContextRing(
-    context: ContextState,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val ringColor = when {
-        context.pct >= 0.8 -> MaterialTheme.colorScheme.error
-        context.pct >= 0.6 -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.primary
-    }
-    Surface(
-        onClick = onClick,
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-        modifier = modifier.size(44.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(
-                progress = { context.pct.toFloat().coerceIn(0f, 1f) },
-                color = ringColor,
-                trackColor = MaterialTheme.colorScheme.outlineVariant,
-                strokeWidth = 3.dp,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(5.dp),
-            )
-            Text(
-                text = "${(context.pct * 100).toInt().coerceAtMost(99)}",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = ringColor,
+            Composer(
+                input = input,
+                onInputChange = onInputChange,
+                onSend = onSend,
+                onStop = onStop,
+                isStreaming = isStreaming,
+                modelLabel = modelLabel,
+                modelSuffix = modelSuffix,
+                pendingImages = pendingImages,
+                onRemoveImage = onRemoveImage,
+                onOpenAdd = onOpenAdd,
+                onOpenModel = onOpenModel,
+                modifier = Modifier.navigationBarsPadding(),
             )
         }
     }
 }
+
+// ---- Context sheet -----------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ContextSheet(
+    sheetState: androidx.compose.material3.SheetState,
     context: ContextState,
     isCompacting: Boolean,
     autoCompact: Boolean,
@@ -703,225 +449,70 @@ private fun ContextSheet(
     onCompactNow: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.background,
+        dragHandle = null,
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+                .padding(horizontal = 16.dp)
+                .navigationBarsPadding(),
         ) {
-            val ringColor = when {
-                context.pct >= 0.8 -> MaterialTheme.colorScheme.error
-                context.pct >= 0.6 -> MaterialTheme.colorScheme.tertiary
-                else -> MaterialTheme.colorScheme.primary
-            }
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(96.dp)) {
-                CircularProgressIndicator(
-                    progress = { context.pct.toFloat().coerceIn(0f, 1f) },
-                    color = ringColor,
-                    trackColor = MaterialTheme.colorScheme.outlineVariant,
-                    strokeWidth = 6.dp,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                Text(
-                    text = "${(context.pct * 100).toInt()}%",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ringColor,
-                )
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "Context window",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "${Models.compactTokens(context.tokens)} of " +
-                    "${Models.compactTokens(context.maxTokens)} tokens · " +
-                    "${context.messageCount} messages",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Estimated locally — the web API reports no usage.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(20.dp))
-
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Auto-compact", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Summarize old turns when the window fills up",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = autoCompact, onCheckedChange = onAutoCompactChange)
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Threshold", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                Text(
-                    "$thresholdPct%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Slider(
-                value = thresholdPct.toFloat(),
-                onValueChange = { onThresholdChange(it.toInt()) },
-                valueRange = 40f..95f,
-                enabled = autoCompact,
-            )
+            SheetHeader(title = "Context", onClose = onDismiss)
             Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onCompactNow, enabled = !isCompacting) {
-                Text(if (isCompacting) "Compacting…" else "Compact now")
+            ClaudeGroup {
+                ClaudeRow(
+                    title = "Used",
+                    value = "${(context.pct * 100).toInt()}% · " +
+                        "${Models.compactTokens(context.tokens)} of " +
+                        Models.compactTokens(context.maxTokens),
+                )
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "Messages",
+                    value = context.messageCount.toString(),
+                )
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "Auto-compact",
+                    value = "Summarize old turns at $thresholdPct%",
+                    trailing = {
+                        ClaudeToggle(checked = autoCompact, onCheckedChange = onAutoCompactChange)
+                    },
+                )
+                ClaudeDivider()
+                ClaudeRow(
+                    title = if (isCompacting) "Compacting…" else "Compact now",
+                    accent = !isCompacting,
+                    onClick = { if (!isCompacting) onCompactNow() },
+                )
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Estimated locally — the API reports no usage.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
-// ---- Model sheet -------------------------------------------------------------
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ModelSheet(
-    models: List<com.kimimobile.data.KimiModel>,
-    selectedId: String,
-    onSelect: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp),
-        ) {
-            Text(
-                "Choose a model",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(12.dp))
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.height(420.dp),
-            ) {
-                items(models, key = { it.id }) { model ->
-                    val isFree = model.provider == com.kimimobile.data.Provider.ZEN
-                    val selected = model.id == selectedId
-                    Surface(
-                        onClick = { onSelect(model.id) },
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceContainerLow,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Column(Modifier.padding(14.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    model.name,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (isFree) CapabilityTag("free")
-                                if (model.vision) {
-                                    Spacer(Modifier.width(4.dp))
-                                    CapabilityTag("vision")
-                                }
-                                if (model.reasoning) {
-                                    Spacer(Modifier.width(4.dp))
-                                    CapabilityTag("thinking")
-                                }
-                            }
-                            Text(
-                                model.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Text(
-                                String.format(Locale.US, "%,d tokens", model.contextTokens),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.outline,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CapabilityTag(text: String) {
-    Surface(
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-        )
-    }
-}
-
-@Composable
-private fun CapabilityToggle(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean = true,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (enabled) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.outline,
-            )
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
-    }
-}
-
-// ---- Message list ------------------------------------------------------------
+// ---- Messages ----------------------------------------------------------------
 
 @Composable
 private fun ChatMessageList(
     messages: List<ChatMessage>,
     isStreaming: Boolean,
     onRetry: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
-    // Are we parked at the bottom? Anything within a screen-ish of the end
-    // counts, so a small drag doesn't immediately disable following.
     val atBottom by remember {
         derivedStateOf {
             val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
@@ -931,37 +522,23 @@ private fun ChatMessageList(
         }
     }
 
-    // Follow new output only while the user is already at the bottom. Scrolling
-    // up during a reply used to be impossible — every token yanked the list
-    // back down.
+    // Follow the stream only while parked at the bottom — otherwise scrolling
+    // up during a reply is impossible.
     var following by remember { mutableStateOf(true) }
-    LaunchedEffect(atBottom, isStreaming) {
-        if (atBottom) following = true
-    }
-    // Any deliberate drag away from the bottom stops the follow.
+    LaunchedEffect(atBottom) { if (atBottom) following = true }
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress && !atBottom) following = false
     }
-
     LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length, following) {
-        if (following && messages.isNotEmpty()) {
-            // scrollToItem, not animateScrollToItem: an animation per token
-            // competes with touch input.
-            listState.scrollToItem(messages.lastIndex)
-        }
+        if (following && messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
     }
 
-    if (messages.isEmpty()) {
-        EmptyState(modifier = modifier.fillMaxSize())
-        return
-    }
-
-    Box(modifier = modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 56.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             items(messages, key = { it.id }) { message ->
                 MessageBubble(
@@ -973,40 +550,31 @@ private fun ChatMessageList(
             }
         }
 
-        // Jump back down once you've scrolled away.
         AnimatedVisibility(
             visible = !following,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 10.dp),
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 8.dp),
         ) {
-            val scope = rememberCoroutineScope()
-            Surface(
-                onClick = {
-                    following = true
-                    scope.launch { listState.animateScrollToItem(messages.lastIndex) }
-                },
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                shadowElevation = 3.dp,
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .clickable {
+                        following = true
+                        scope.launch { listState.animateScrollToItem(messages.lastIndex) }
+                    },
+                contentAlignment = Alignment.Center,
             ) {
-                Row(
-                    Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.Default.ExpandMore,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        if (isStreaming) "Jump to latest" else "Jump to bottom",
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
+                Icon(
+                    Icons.Default.ExpandMore,
+                    contentDescription = "Jump to latest",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(19.dp),
+                )
             }
         }
     }
@@ -1019,39 +587,26 @@ private fun MessageBubble(
     onRetry: () -> Unit,
 ) {
     if (message.notice) {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        "Context compacted — earlier turns summarized",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    SelectionContainer {
-                        MarkdownText(
-                            markdown = message.content,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                }
+        Column(Modifier.fillMaxWidth()) {
+            Text(
+                "Context compacted",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = Claude.Terracotta,
+            )
+            Spacer(Modifier.height(6.dp))
+            SelectionContainer {
+                MarkdownText(
+                    markdown = message.content,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
         return
     }
 
     if (message.role == MessageRole.USER) {
-        // Only the user gets a bubble — it marks the turn without indenting
-        // every assistant line.
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.End,
-        ) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
             if (message.images.isNotEmpty()) {
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1070,17 +625,18 @@ private fun MessageBubble(
                 }
             }
             if (message.content.isNotBlank()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
-                    modifier = Modifier.widthIn(max = 520.dp),
+                Box(
+                    Modifier
+                        .widthIn(max = 320.dp)
+                        .clip(RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .padding(horizontal = 15.dp, vertical = 10.dp),
                 ) {
                     SelectionContainer {
                         Text(
-                            text = message.content,
+                            message.content,
                             style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 }
@@ -1089,8 +645,7 @@ private fun MessageBubble(
         return
     }
 
-    // Assistant: full width, no avatar, no bubble — the text is the content,
-    // and the extra 36dp of indent was making everything feel cramped.
+    // Assistant: full width, no bubble, no avatar.
     Column(Modifier.fillMaxWidth()) {
         if (message.reasoning.isNotBlank()) {
             ThinkingBlock(
@@ -1100,278 +655,86 @@ private fun MessageBubble(
             )
         }
         when {
-            showTyping && message.content.isEmpty() ->
-                TypingIndicator(modifier = Modifier.padding(vertical = 8.dp))
+            showTyping && message.content.isEmpty() -> TypingIndicator()
 
             message.failed -> Column {
                 Text(
-                    text = "That request didn't go through.",
+                    "That request didn't go through.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                 )
                 Spacer(Modifier.height(4.dp))
                 TextButton(onClick = onRetry, contentPadding = PaddingValues(0.dp)) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, Modifier.size(16.dp))
+                    Icon(Icons.Default.Refresh, contentDescription = null, Modifier.size(15.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Retry")
                 }
             }
 
             else -> {
-                SelectionContainer {
-                    MarkdownText(markdown = message.content)
-                }
+                SelectionContainer { MarkdownText(markdown = message.content) }
                 if (!showTyping && message.content.isNotBlank()) {
-                    MessageActions(content = message.content)
+                    MessageActions(message.content)
                 }
             }
         }
     }
 }
 
-/** Copy affordance under each finished reply. */
 @Composable
 private fun MessageActions(content: String) {
     val clipboard = LocalClipboardManager.current
     var copied by remember(content) { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier.padding(top = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        TextButton(
-            onClick = {
-                clipboard.setText(AnnotatedString(content))
-                copied = true
-            },
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+    Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .clip(CircleShape)
+                .clickable {
+                    clipboard.setText(AnnotatedString(content))
+                    copied = true
+                }
+                .padding(horizontal = 10.dp, vertical = 6.dp),
         ) {
-            Icon(
-                if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                contentDescription = "Copy message",
-                modifier = Modifier.size(14.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                if (copied) "Copied" else "Copy",
-                style = MaterialTheme.typography.labelSmall,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                    contentDescription = "Copy",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (copied) "Copied" else "Copy",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun EmptyState(modifier: Modifier = Modifier) {
+private fun EmptyState() {
     Column(
-        modifier = modifier.padding(horizontal = 24.dp),
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(72.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.secondaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "K",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
-        }
-        Spacer(Modifier.height(16.dp))
+        // Terracotta starburst, the app's one moment of colour.
         Text(
-            text = "Kimi Mobile",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onBackground,
+            "✳",
+            style = MaterialTheme.typography.displaySmall,
+            color = Claude.Terracotta,
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(14.dp))
         Text(
-            text = "Search, vision, reasoning and agents — free via the web API",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            "Back at it",
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(24.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                "Summarize today's AI news",
-                "Explain this screenshot",
-                "Write a Kotlin coroutine retry helper",
-            ).forEach { prompt ->
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.widthIn(max = 320.dp),
-                ) {
-                    Text(
-                        text = prompt,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun Composer(
-    input: String,
-    onInputChange: (String) -> Unit,
-    onSend: () -> Unit,
-    enabled: Boolean,
-    agentEnabled: Boolean,
-    pendingImages: List<String>,
-    supportsVision: Boolean,
-    onAttachImage: () -> Unit,
-    onRemoveImage: (String) -> Unit,
-    onOpenToolsSheet: () -> Unit,
-    contextState: ContextState,
-    onOpenContextSheet: () -> Unit,
-    sessionSpend: SessionSpend,
-    isZenModel: Boolean,
-) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-    ) {
-        // The surface paints behind the gesture bar; padding keeps content
-        // above it. Without this the nav-bar strip renders as dead space.
-        Column(
-            Modifier
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            // Staged attachments
-            if (pendingImages.isNotEmpty()) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(bottom = 8.dp),
-                ) {
-                    items(pendingImages) { data ->
-                        Box {
-                            AsyncImage(
-                                model = data,
-                                contentDescription = "Attachment",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(RoundedCornerShape(12.dp)),
-                            )
-                            Surface(
-                                onClick = { onRemoveImage(data) },
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(20.dp),
-                            ) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "Remove",
-                                    modifier = Modifier.padding(3.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Usage line: credits spent on Zen, tokens either way.
-            if (sessionSpend.requests > 0) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(end = 4.dp, bottom = 4.dp),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    Text(
-                        text = if (isZenModel) {
-                            "${Models.compactTokens(sessionSpend.tokens)} tokens · " +
-                                String.format(Locale.US, "$%.4f", sessionSpend.costUsd)
-                        } else {
-                            "${Models.compactTokens(sessionSpend.tokens)} tokens this session"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                }
-            }
-
-            Row(verticalAlignment = Alignment.Bottom) {
-                // Context ring, bottom-left as requested.
-                ContextRing(
-                    context = contextState,
-                    onClick = onOpenContextSheet,
-                    modifier = Modifier.padding(end = 6.dp),
-                )
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = onInputChange,
-                    placeholder = {
-                        Text(if (agentEnabled) "Ask the agent…" else "Message Kimi…")
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(24.dp),
-                    maxLines = 5,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { if (input.isNotBlank()) onSend() }),
-                    leadingIcon = {
-                        IconButton(onClick = onOpenToolsSheet) {
-                            Icon(
-                                Icons.Default.Add,
-                                contentDescription = "Capabilities & tools",
-                                tint = if (agentEnabled) MaterialTheme.colorScheme.tertiary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                    trailingIcon = if (supportsVision) {
-                        {
-                            IconButton(onClick = onAttachImage) {
-                                Icon(
-                                    Icons.Default.Image,
-                                    contentDescription = "Attach image",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    } else null,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    ),
-                )
-                Spacer(Modifier.width(8.dp))
-                val canSend = enabled && (input.isNotBlank() || pendingImages.isNotEmpty())
-                IconButton(
-                    onClick = onSend,
-                    enabled = canSend,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (canSend) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceContainerHighest
-                        ),
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
     }
 }

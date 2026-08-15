@@ -1,42 +1,28 @@
 package com.kimimobile.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Surface
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,257 +30,221 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kimimobile.data.KimiModel
 import com.kimimobile.data.Models
-import com.kimimobile.data.Provider
 import com.kimimobile.data.ReasoningEffort
 
 /**
- * Model picker in the shape Claude uses: a sheet off the composer, each model
- * a row of name + tagline, grouped by provider, with the effort selector
- * appearing inline under the selected model when that model supports it.
+ * Model picker in Claude's shape: a short list of the models you'd actually
+ * pick, an Effort row that opens its own step, and everything else behind
+ * "More models". Partial height, blue for the current selection.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelPickerSheet(
+    sheetState: SheetState,
     models: List<KimiModel>,
-    hasZenKey: Boolean,
-    kimiHidden: Boolean = false,
     selectedId: String,
     effort: ReasoningEffort,
+    kimiHidden: Boolean,
     onSelect: (String) -> Unit,
     onEffortChange: (ReasoningEffort) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var query by remember { mutableStateOf("") }
+    // Two steps in one sheet: the short list, then the full list or effort.
+    var step by remember { mutableStateOf(Step.MODELS) }
 
-    val filtered = remember(models, query) {
-        if (query.isBlank()) models
-        else models.filter {
-            it.name.contains(query, true) || it.description.contains(query, true)
-        }
+    val selected = models.firstOrNull { it.id == selectedId }
+    // The headline list stays short — the rest lives behind "More models".
+    val featured = remember(models, selectedId) {
+        val head = models.take(4)
+        if (selected != null && head.none { it.id == selectedId }) head + selected else head
     }
-    val grouped = remember(filtered) { filtered.groupBy { it.provider } }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MaterialTheme.colorScheme.background,
+        dragHandle = null,
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp),
+                .padding(horizontal = 16.dp)
+                .navigationBarsPadding(),
         ) {
-            Text(
-                "Model",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(10.dp))
+            when (step) {
+                Step.MODELS -> {
+                    SheetHeader(title = "Select model", onClose = onDismiss)
+                    Spacer(Modifier.height(8.dp))
 
-            if (models.size > 8) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("Search models") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(10.dp))
-            }
+                    if (kimiHidden) {
+                        ClaudeGroup {
+                            ClaudeRow(
+                                title = "Sign in to Kimi",
+                                value = "Unlocks K3 and the K2 family, free with your account",
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                    }
 
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 460.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                if (kimiHidden) {
-                    item(key = "kimi-hint") {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                "Sign in to Kimi in Settings to unlock K3 and the K2 family — free with your account.",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(12.dp),
+                    ClaudeGroup {
+                        featured.forEachIndexed { index, model ->
+                            if (index > 0) ClaudeDivider()
+                            ModelRow(
+                                model = model,
+                                selected = model.id == selectedId,
+                                onClick = { onSelect(model.id) },
                             )
                         }
                     }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Effort only matters for models that actually reason.
+                    if (selected?.reasoning == true) {
+                        ClaudeGroup {
+                            ClaudeRow(
+                                title = "Effort",
+                                value = effort.label,
+                                icon = Icons.Default.Speed,
+                                iconInCircle = true,
+                                onClick = { step = Step.EFFORT },
+                                trailing = { Chevron() },
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                    }
+
+                    if (models.size > featured.size) {
+                        ClaudeGroup {
+                            ClaudeRow(
+                                title = "More models",
+                                icon = Icons.Default.MoreHoriz,
+                                iconInCircle = true,
+                                onClick = { step = Step.ALL },
+                                trailing = { Chevron() },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
                 }
-                grouped.forEach { (provider, entries) ->
-                    item(key = "header-${provider.id}") {
-                        Text(
-                            text = provider.label,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 4.dp, start = 4.dp),
-                        )
+
+                Step.ALL -> {
+                    SheetHeader(title = "All models", onClose = { step = Step.MODELS })
+                    Spacer(Modifier.height(8.dp))
+                    Column(
+                        Modifier
+                            .heightIn(max = 460.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        models.groupBy { it.provider }.forEach { (provider, entries) ->
+                            GroupLabel(provider.label)
+                            ClaudeGroup {
+                                entries.forEachIndexed { index, model ->
+                                    if (index > 0) ClaudeDivider()
+                                    ModelRow(
+                                        model = model,
+                                        selected = model.id == selectedId,
+                                        onClick = { onSelect(model.id) },
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(24.dp))
                     }
-                    items(entries, key = { it.id }) { model ->
-                        ModelRow(
-                            model = model,
-                            locked = model.requiresKey && !hasZenKey,
-                            selected = model.id == selectedId,
-                            effort = effort,
-                            onSelect = { onSelect(model.id) },
-                            onEffortChange = onEffortChange,
-                        )
+                }
+
+                Step.EFFORT -> {
+                    SheetHeader(title = "Effort", onClose = { step = Step.MODELS })
+                    Spacer(Modifier.height(8.dp))
+                    ClaudeGroup {
+                        ReasoningEffort.entries.forEachIndexed { index, level ->
+                            if (index > 0) ClaudeDivider()
+                            ClaudeRow(
+                                title = level.label,
+                                value = level.description,
+                                onClick = {
+                                    onEffortChange(level)
+                                    step = Step.MODELS
+                                },
+                                trailing = {
+                                    if (level == effort) {
+                                        Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = "Selected",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                },
+                            )
+                        }
                     }
+                    Spacer(Modifier.height(24.dp))
                 }
             }
         }
     }
 }
+
+private enum class Step { MODELS, ALL, EFFORT }
 
 @Composable
 private fun ModelRow(
     model: KimiModel,
-    locked: Boolean,
     selected: Boolean,
-    effort: ReasoningEffort,
-    onSelect: () -> Unit,
-    onEffortChange: (ReasoningEffort) -> Unit,
+    onClick: () -> Unit,
 ) {
-    Surface(
-        onClick = onSelect,
-        enabled = !locked,
-        shape = RoundedCornerShape(16.dp),
-        color = if (selected) MaterialTheme.colorScheme.surfaceContainerHigh
-        else MaterialTheme.colorScheme.surface,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            model.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        if (model.provider == Provider.ZEN && !model.requiresKey) {
-                            Spacer(Modifier.width(6.dp))
-                            Tag("free", MaterialTheme.colorScheme.tertiaryContainer,
-                                MaterialTheme.colorScheme.onTertiaryContainer)
-                        }
-                        if (locked) {
-                            Spacer(Modifier.width(6.dp))
-                            Tag("needs key", MaterialTheme.colorScheme.surfaceContainerHighest,
-                                MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (model.reasoning) {
-                            Spacer(Modifier.width(6.dp))
-                            Tag("thinks", MaterialTheme.colorScheme.secondaryContainer,
-                                MaterialTheme.colorScheme.onSecondaryContainer)
-                        }
-                    }
-                    Text(
-                        model.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        "${Models.compactTokens(model.contextTokens)} context",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                }
-                if (selected) {
-                    Box(
-                        Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Default.Check,
-                            contentDescription = "Selected",
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
-                }
-            }
+    val tint = if (selected) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.onSurface
 
-            // Effort sits under the active model, like Claude's picker — and
-            // only for models that actually reason.
-            AnimatedVisibility(
-                visible = selected && model.reasoning,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
-            ) {
-                Column {
-                    Spacer(Modifier.height(10.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(15.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            "Effort",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        ReasoningEffort.entries.forEachIndexed { index, level ->
-                            SegmentedButton(
-                                selected = effort == level,
-                                onClick = { onEffortChange(level) },
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = ReasoningEffort.entries.size,
-                                ),
-                            ) {
-                                Text(level.label, style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        effort.description,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                }
+    ClaudeRow(
+        title = "",
+        onClick = onClick,
+        trailing = {
+            if (selected) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = "Selected",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
-        }
-    }
+        },
+        content = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        model.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = tint,
+                    )
+                    if (model.requiresKey) {
+                        Spacer(Modifier.width(8.dp))
+                        ClaudePill("Requires a key")
+                    }
+                }
+                Text(
+                    model.description.ifBlank { "${Models.compactTokens(model.contextTokens)} context" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        },
+    )
 }
 
 @Composable
-private fun Tag(
-    text: String,
-    background: androidx.compose.ui.graphics.Color,
-    foreground: androidx.compose.ui.graphics.Color,
-) {
-    Surface(shape = RoundedCornerShape(6.dp), color = background) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = foreground,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-        )
-    }
+private fun Chevron() {
+    Icon(
+        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }

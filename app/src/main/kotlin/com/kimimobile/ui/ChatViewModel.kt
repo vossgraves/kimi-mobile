@@ -146,6 +146,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val api = ChatApi()
 
+    /** The in-flight reply, so Stop can cancel it. */
+    private var streamJob: kotlinx.coroutines.Job? = null
+
     init {
         api.onSpend = { report ->
             _sessionSpend.update { current ->
@@ -352,7 +355,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         _isStreaming.value = true
         _isConnected.value = null
-        viewModelScope.launch {
+        streamJob = viewModelScope.launch {
             try {
                 // Images: use the chosen model if it sees, otherwise borrow
                 // Kimi vision and feed its description back to the real model.
@@ -403,9 +406,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
-                // The free Zen pool rate-limits per model; when the chosen one
-                // is saturated, fail over to the next free model instead of
-                // dying — the user asked a question, not for an error.
+                // Free Zen models answer reliably once the client identifies
+                // itself (see ChatApi's user agent). This failover is now a
+                // genuine safety net for a model that is actually down, not a
+                // workaround for every request.
                 val candidates = buildList {
                     add(cfg.model)
                     val current = Models.byId(cfg.model)
@@ -415,7 +419,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 it.provider == Provider.ZEN && !it.requiresKey &&
                                     it.id != cfg.model
                             }
-                            .take(2)
+                            .take(1)
                             .forEach { add(it.id) }
                     }
                 }
@@ -514,7 +518,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _tasks.value = emptyList()
         // Agent runs are long; don't let the screen going off kill them.
         if (cfg.keepAwake) WakeLockService.start(getApplication(), "Agent run in progress")
-        viewModelScope.launch {
+        streamJob = viewModelScope.launch {
             try {
                 val model = resolvedModel(cfg)
                 val (baseUrl, token) = endpointFor(cfg.model, cfg)
@@ -1102,6 +1106,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _tasks.value = emptyList()
         clearImages()
         refreshContext()
+    }
+
+    /** Cancels an in-flight reply, keeping whatever streamed so far. */
+    fun stopStreaming() {
+        streamJob?.cancel()
+        streamJob = null
+        _messages.update { list ->
+            list.map { if (it.streaming) it.copy(streaming = false) else it }
+        }
+        _isStreaming.value = false
+        _isAgentTurn.value = false
+        _tasks.value = emptyList()
+        WakeLockService.stop(getApplication())
+        persistConversation()
     }
 
     fun clearError() {

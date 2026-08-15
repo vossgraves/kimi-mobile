@@ -141,7 +141,12 @@ object ModelCatalog {
     }
 
     private fun zenModelIds(): List<String>? {
-        val request = Request.Builder().url("${Models.ZEN_BASE_URL}/models").get().build()
+        // Same client-identity gate as chat requests — see ChatApi.
+        val request = Request.Builder()
+            .url("${Models.ZEN_BASE_URL}/models")
+            .header("User-Agent", "opencode/1.0.0")
+            .get()
+            .build()
         val body = client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) return null
             response.body?.string().orEmpty()

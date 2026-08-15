@@ -101,6 +101,17 @@ private data class CompletionMessage(
 
 private val JSON = Json { ignoreUnknownKeys = true }
 
+/**
+ * OpenCode Zen rate-limits by client identity, not just by volume: the default
+ * OkHttp user agent gets a blanket 429 on every free model, while identifying
+ * as the opencode client returns 200 on all of them. Verified directly — the
+ * "rate limit" was never saturation, it was an unrecognised client.
+ */
+private const val ZEN_USER_AGENT = "opencode/1.0.0"
+
+/** True for requests going to OpenCode Zen rather than the Kimi proxy. */
+private fun isZen(baseUrl: String): Boolean = baseUrl.contains("opencode.ai")
+
 /** Minimal OpenAI-compatible client, hand-rolled SSE (no extra deps). */
 class ChatApi(
     /** Invoked whenever a response reports usage, for the credit counter. */
@@ -170,6 +181,7 @@ class ChatApi(
             .url("${baseUrl.trimEnd('/')}/chat/completions")
             .header("Authorization", "Bearer $token")
             .header("Accept", "text/event-stream")
+            .apply { if (isZen(baseUrl)) header("User-Agent", ZEN_USER_AGENT) }
             .post(body)
             .build()
 
@@ -223,6 +235,7 @@ class ChatApi(
         val request = Request.Builder()
             .url("${baseUrl.trimEnd('/')}/chat/completions")
             .header("Authorization", "Bearer $token")
+            .apply { if (isZen(baseUrl)) header("User-Agent", ZEN_USER_AGENT) }
             .post(body)
             .build()
 
@@ -289,6 +302,7 @@ class ChatApi(
             val request = Request.Builder()
                 .url("${baseUrl.trimEnd('/')}/models")
                 .header("Authorization", "Bearer $token")
+                .apply { if (isZen(baseUrl)) header("User-Agent", ZEN_USER_AGENT) }
                 .get()
                 .build()
             client.newCall(request).execute().use { response ->

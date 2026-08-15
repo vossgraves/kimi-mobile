@@ -1,6 +1,8 @@
 package com.kimimobile.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,16 +14,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Key
@@ -32,21 +35,19 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -59,18 +60,23 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kimimobile.BuildConfig
+import com.kimimobile.data.AgentMode
 import com.kimimobile.data.Models
 import com.kimimobile.ui.ChatViewModel
-import com.kimimobile.ui.components.SettingsRow
-import com.kimimobile.ui.components.SettingsSection
-import com.kimimobile.ui.components.SettingsSwitch
-import java.util.Locale
+import com.kimimobile.ui.components.ClaudeDivider
+import com.kimimobile.ui.components.ClaudeGroup
+import com.kimimobile.ui.components.ClaudePill
+import com.kimimobile.ui.components.ClaudeRow
+import com.kimimobile.ui.components.ClaudeToggle
+import com.kimimobile.ui.components.GroupLabel
+import com.kimimobile.ui.theme.Claude
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -89,92 +95,108 @@ fun SettingsScreen(
     val contextState by viewModel.contextState.collectAsState()
     val isCompacting by viewModel.isCompacting.collectAsState()
     val discoveringProxy by viewModel.discoveringProxy.collectAsState()
-    var showAdvanced by rememberSaveable { mutableStateOf(false) }
 
-    var baseUrl by rememberSaveable { mutableStateOf("") }
     var token by rememberSaveable { mutableStateOf("") }
     var zenKey by rememberSaveable { mutableStateOf("") }
+    var baseUrl by rememberSaveable { mutableStateOf("") }
     var showToken by rememberSaveable { mutableStateOf(false) }
     var showZenKey by rememberSaveable { mutableStateOf(false) }
-    var testing by remember { mutableStateOf(false) }
-    var testResult by remember { mutableStateOf<String?>(null) }
     var maxTokensText by rememberSaveable { mutableStateOf("") }
-    var autoCompact by rememberSaveable { mutableStateOf(true) }
     var thresholdPct by rememberSaveable { mutableIntStateOf(80) }
     var loaded by rememberSaveable { mutableStateOf(false) }
+    var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    var showKeys by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(settings) {
-        if (!loaded) {
-            baseUrl = settings.baseUrl
+        if (!loaded && settings.loaded) {
             token = settings.token
             zenKey = settings.zenApiKey
+            baseUrl = settings.baseUrl
             maxTokensText = settings.maxContextTokens.toString()
-            autoCompact = settings.autoCompact
             thresholdPct = settings.compactThresholdPct
             loaded = true
         }
     }
-
     LaunchedEffect(token, loaded) {
         if (!loaded) return@LaunchedEffect
         delay(500)
-        viewModel.store.setToken(token)
-    }
-    LaunchedEffect(baseUrl, loaded) {
-        if (!loaded || baseUrl == settings.baseUrl) return@LaunchedEffect
-        delay(600)
-        if (baseUrl.isNotBlank()) viewModel.store.setBaseUrl(baseUrl, manual = true)
+        if (token != settings.token) viewModel.store.setToken(token)
     }
     LaunchedEffect(zenKey, loaded) {
         if (!loaded) return@LaunchedEffect
         delay(500)
-        viewModel.store.setZenApiKey(zenKey)
+        if (zenKey != settings.zenApiKey) viewModel.store.setZenApiKey(zenKey)
     }
-    LaunchedEffect(maxTokensText, loaded) {
+    LaunchedEffect(baseUrl, loaded) {
+        if (!loaded || baseUrl == settings.baseUrl || baseUrl.isBlank()) return@LaunchedEffect
+        delay(600)
+        viewModel.store.setBaseUrl(baseUrl, manual = true)
+    }
+    LaunchedEffect(maxTokensText, thresholdPct, loaded) {
         if (!loaded) return@LaunchedEffect
-        delay(500)
+        delay(400)
         maxTokensText.toLongOrNull()?.let(viewModel::setMaxContextTokens)
-    }
-    LaunchedEffect(autoCompact, thresholdPct, loaded) {
-        if (!loaded) return@LaunchedEffect
-        delay(300)
-        viewModel.setAutoCompact(autoCompact)
         viewModel.setCompactThreshold(thresholdPct)
     }
 
     val signedIn = settings.token.isNotBlank()
+    val agentMode = AgentMode.byId(settings.agentMode)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Settings", fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        "Settings",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
                 .navigationBarsPadding(),
         ) {
-            // ---- Account ----
-            SettingsSection(
-                title = "Account",
-                subtitle = if (signedIn) "Signed in to Kimi" else "Not signed in",
-            ) {
+            // ---- Account card ----
+            ClaudeGroup {
+                ClaudeRow(
+                    title = if (signedIn) "Signed in to Kimi" else "Not signed in",
+                    value = if (signedIn) "K3 and the K2 family unlocked"
+                    else "Free OpenCode Zen models only",
+                    trailing = {
+                        if (signedIn) {
+                            ClaudePill(
+                                "Connected",
+                                background = MaterialTheme.colorScheme.onSurface,
+                                foreground = MaterialTheme.colorScheme.background,
+                            )
+                        }
+                    },
+                )
+                ClaudeDivider()
                 if (signedIn) {
-                    SettingsRow(
+                    ClaudeRow(
                         title = "Sign out",
-                        subtitle = "Clears your saved Kimi token",
                         icon = Icons.AutoMirrored.Filled.Logout,
                         onClick = {
                             scope.launch {
@@ -185,45 +207,23 @@ fun SettingsScreen(
                         },
                     )
                 } else {
-                    SettingsRow(
+                    ClaudeRow(
                         title = "Sign in with browser",
-                        subtitle = "Recommended — grabs your token automatically",
                         icon = Icons.AutoMirrored.Filled.Login,
+                        accent = true,
                         onClick = onOpenLogin,
                     )
                 }
-                SettingsRow(
-                    title = "Test connection",
-                    subtitle = testResult ?: "Checks your token against the server",
-                    icon = Icons.Default.Check,
-                    onClick = {
-                        if (!testing) {
-                            testing = true
-                            testResult = null
-                            scope.launch {
-                                val ok = viewModel.testConnection(baseUrl, token, settings.model)
-                                testing = false
-                                testResult = if (ok) "Connected" else "Failed — check token and URL"
-                            }
-                        }
-                    },
-                    trailing = {
-                        if (testing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    },
-                )
             }
 
-            // Model selection lives in the composer picker — not duplicated here.
-            // ---- Providers ----
-            SettingsSection(
-                title = "Providers",
-                subtitle = "Kimi runs through a local proxy; Zen's free models need nothing",
-            ) {
-                SettingsRow(
+            // ---- Connection ----
+            GroupLabel("Connection")
+            ClaudeGroup {
+                ClaudeRow(
                     title = "Kimi proxy",
-                    subtitle = when {
+                    value = when {
                         discoveringProxy -> "Searching…"
-                        settings.baseUrl.isBlank() -> "Not found — tap to search again"
+                        settings.baseUrl.isBlank() -> "Not found — tap to search"
                         else -> settings.baseUrl
                     },
                     icon = Icons.Default.Dns,
@@ -234,171 +234,193 @@ fun SettingsScreen(
                         }
                     },
                 )
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    OutlinedTextField(
-                        value = token,
-                        onValueChange = { token = it },
-                        label = { Text("Kimi refresh token") },
-                        placeholder = { Text("eyJhbGciOi…") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        visualTransformation = if (showToken) VisualTransformation.None
-                        else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { showToken = !showToken }) {
-                                Icon(
-                                    if (showToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (showToken) "Hide" else "Show",
-                                )
-                            }
-                        },
-                        supportingText = { Text("Filled in automatically when you sign in") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = zenKey,
-                        onValueChange = { zenKey = it },
-                        label = { Text("OpenCode Zen API key (optional)") },
-                        placeholder = { Text("Unlocks K3, Claude, GPT, Gemini…") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        visualTransformation = if (showZenKey) VisualTransformation.None
-                        else PasswordVisualTransformation(),
-                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
-                        trailingIcon = {
-                            IconButton(onClick = { showZenKey = !showZenKey }) {
-                                Icon(
-                                    if (showZenKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (showZenKey) "Hide" else "Show",
-                                )
-                            }
-                        },
-                        supportingText = { Text("Free Zen models work without a key") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                SettingsSwitch(
-                    title = "Keep runs awake",
-                    subtitle = "Holds a wakelock during agent runs, cancellable from the notification",
-                    icon = Icons.Default.Bolt,
-                    checked = settings.keepAwake,
-                    onCheckedChange = viewModel::setKeepAwake,
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "API keys",
+                    value = if (settings.zenApiKey.isBlank()) "Free models only"
+                    else "Zen key set",
+                    icon = Icons.Default.Key,
+                    onClick = { showKeys = !showKeys },
+                    trailing = { Chevron() },
                 )
-                SettingsRow(
-                    title = "Advanced",
-                    subtitle = if (showAdvanced) "Hide proxy URL" else "Set the proxy URL manually",
-                    icon = Icons.Default.Tune,
-                    onClick = { showAdvanced = !showAdvanced },
-                )
-                if (showAdvanced) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                if (showKeys) {
+                    ClaudeDivider()
+                    Column(Modifier.padding(16.dp)) {
                         OutlinedTextField(
-                            value = baseUrl,
-                            onValueChange = { baseUrl = it },
-                            label = { Text("Proxy URL override") },
-                            placeholder = { Text("http://127.0.0.1:8000/v1") },
+                            value = token,
+                            onValueChange = { token = it },
+                            label = { Text("Kimi refresh token") },
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
-                            supportingText = { Text("Leave empty to keep auto-detecting") },
+                            visualTransformation = if (showToken) VisualTransformation.None
+                            else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showToken = !showToken }) {
+                                    Icon(
+                                        if (showToken) Icons.Default.VisibilityOff
+                                        else Icons.Default.Visibility,
+                                        contentDescription = null,
+                                    )
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = zenKey,
+                            onValueChange = { zenKey = it },
+                            label = { Text("OpenCode Zen key (optional)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            visualTransformation = if (showZenKey) VisualTransformation.None
+                            else PasswordVisualTransformation(),
+                            trailingIcon = {
+                                IconButton(onClick = { showZenKey = !showZenKey }) {
+                                    Icon(
+                                        if (showZenKey) Icons.Default.VisibilityOff
+                                        else Icons.Default.Visibility,
+                                        contentDescription = null,
+                                    )
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
             }
 
-            // ---- Context ----
-            SettingsSection(
-                title = "Context",
-                subtitle = "${(contextState.pct * 100).toInt()}% used · " +
-                    "${Models.compactTokens(contextState.tokens)} / " +
-                    "${Models.compactTokens(contextState.maxTokens)}",
-            ) {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    OutlinedTextField(
-                        value = maxTokensText,
-                        onValueChange = { new -> maxTokensText = new.filter { it.isDigit() }.take(9) },
-                        label = { Text("Max context tokens") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        supportingText = { Text("Set from the model; lower it if you hit limits sooner") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                SettingsSwitch(
-                    title = "Auto-compact",
-                    subtitle = "Summarize old turns when the window fills up",
-                    icon = Icons.Default.Memory,
-                    checked = autoCompact,
-                    onCheckedChange = { autoCompact = it },
+            // ---- Capabilities ----
+            GroupLabel("Capabilities")
+            ClaudeGroup {
+                ClaudeRow(
+                    title = "Tool access",
+                    value = agentMode.label,
+                    icon = Icons.Default.Science,
                 )
-                Column(Modifier.padding(horizontal = 16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Compact at",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "Connectors",
+                    value = if (settings.customMcpServers.isEmpty()) "None"
+                    else "${settings.customMcpServers.size} connected",
+                    icon = Icons.Default.Cable,
+                    onClick = onOpenMarketplace,
+                    trailing = { Chevron() },
+                )
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "Marketplace",
+                    value = "${settings.installedSkills.size} tools enabled",
+                    icon = Icons.Default.Storefront,
+                    onClick = onOpenMarketplace,
+                    trailing = { Chevron() },
+                )
+            }
+
+            // ---- Context ----
+            GroupLabel("Context")
+            ClaudeGroup {
+                ClaudeRow(
+                    title = "Usage",
+                    value = "${(contextState.pct * 100).toInt()}% · " +
+                        "${Models.compactTokens(contextState.tokens)} of " +
+                        Models.compactTokens(contextState.maxTokens),
+                    icon = Icons.Default.Memory,
+                )
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "Auto-compact",
+                    value = "Summarize old turns at $thresholdPct%",
+                    icon = Icons.Default.Tune,
+                    trailing = {
+                        ClaudeToggle(
+                            checked = settings.autoCompact,
+                            onCheckedChange = viewModel::setAutoCompact,
                         )
-                        Text(
-                            "$thresholdPct%",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    },
+                )
+                if (settings.autoCompact) {
+                    ClaudeDivider()
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Slider(
+                            value = thresholdPct.toFloat(),
+                            onValueChange = { thresholdPct = it.toInt() },
+                            valueRange = 40f..95f,
                         )
                     }
-                    Slider(
-                        value = thresholdPct.toFloat(),
-                        onValueChange = { thresholdPct = it.toInt() },
-                        valueRange = 40f..95f,
-                        enabled = autoCompact,
-                    )
                 }
-                SettingsRow(
+                ClaudeDivider()
+                ClaudeRow(
                     title = if (isCompacting) "Compacting…" else "Compact now",
-                    subtitle = "Summarize this conversation immediately",
                     onClick = { if (!isCompacting) viewModel.compactNow() },
                     trailing = {
-                        if (isCompacting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        if (isCompacting) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        }
                     },
                 )
             }
 
-            // ---- Agent ----
-            SettingsSection(
-                title = "Agent & tools",
-                subtitle = "Tools, subagents and the marketplace",
-            ) {
-                SettingsSwitch(
-                    title = "Agent mode",
-                    subtitle = "Model calls tools and delegates to subagents",
-                    icon = Icons.Default.Science,
-                    checked = settings.agentEnabled,
-                    onCheckedChange = viewModel::setAgentEnabled,
+            // ---- App ----
+            GroupLabel("App")
+            ClaudeGroup {
+                ClaudeRow(
+                    title = "Keep runs awake",
+                    value = "Hold a wakelock during agent runs",
+                    icon = Icons.Default.Bolt,
+                    trailing = {
+                        ClaudeToggle(
+                            checked = settings.keepAwake,
+                            onCheckedChange = viewModel::setKeepAwake,
+                        )
+                    },
                 )
-                SettingsRow(
-                    title = "Marketplace",
-                    subtitle = "${settings.installedSkills.size} tools enabled",
-                    icon = Icons.Default.Storefront,
-                    onClick = onOpenMarketplace,
-                )
-            }
-
-            // ---- Updates ----
-            SettingsSection(title = "Updates") {
-                SettingsRow(
-                    title = "Check for updates",
-                    subtitle = "${settings.updateChannel.lowercase()
-                        .replaceFirstChar { it.uppercase() }} channel · v${BuildConfig.VERSION_NAME}",
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "Updates",
+                    value = "${settings.updateChannel.lowercase()
+                        .replaceFirstChar { it.uppercase() }} · v${BuildConfig.VERSION_NAME}",
                     icon = Icons.Default.SystemUpdate,
                     onClick = onOpenUpdates,
+                    trailing = { Chevron() },
                 )
+                ClaudeDivider()
+                ClaudeRow(
+                    title = "Advanced",
+                    value = if (showAdvanced) "Hide" else "Proxy URL override",
+                    icon = Icons.Default.Tune,
+                    onClick = { showAdvanced = !showAdvanced },
+                    trailing = { Chevron() },
+                )
+                if (showAdvanced) {
+                    ClaudeDivider()
+                    Column(Modifier.padding(16.dp)) {
+                        OutlinedTextField(
+                            value = baseUrl,
+                            onValueChange = { baseUrl = it },
+                            label = { Text("Proxy URL") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = maxTokensText,
+                            onValueChange = { new -> maxTokensText = new.filter { it.isDigit() }.take(9) },
+                            label = { Text("Max context tokens") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
             }
 
             // ---- Conversation ----
-            SettingsSection(title = "Conversation") {
-                SettingsRow(
-                    title = "Clear conversation",
-                    subtitle = "Deletes all messages in this chat",
+            GroupLabel("Conversation")
+            ClaudeGroup {
+                ClaudeRow(
+                    title = "Clear this chat",
                     icon = Icons.Default.DeleteOutline,
                     onClick = { viewModel.clear() },
                 )
@@ -407,4 +429,13 @@ fun SettingsScreen(
             Spacer(Modifier.height(32.dp))
         }
     }
+}
+
+@Composable
+private fun Chevron() {
+    Icon(
+        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }

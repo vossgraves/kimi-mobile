@@ -1,141 +1,172 @@
 package com.kimimobile.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-// ---- Warm, editorial palette inspired by Claude's design language ----
-// Terracotta accent, cream/ivory surfaces, olive-toned darks. No cool grays.
+/**
+ * Claude's visual language, taken from the app itself rather than Material's
+ * defaults: a true-black canvas, flat grey cards separated by hairlines, thin
+ * outline icons, serif for headings, and colour used sparingly — terracotta
+ * for identity, blue for state.
+ */
+object Claude {
+    // Canvas and cards
+    val Black = Color(0xFF000000)
+    val Card = Color(0xFF1C1C1E)
+    val CardPressed = Color(0xFF2A2A2C)
+    val Elevated = Color(0xFF242426)
+    val Hairline = Color(0xFF2E2E30)
 
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF9C4122),           // terracotta
-    onPrimary = Color(0xFFFFF8F5),
-    primaryContainer = Color(0xFFFFDBCB),
-    onPrimaryContainer = Color(0xFF361000),
-    secondary = Color(0xFF76574A),         // warm taupe
-    onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFFFDBCB),
-    onSecondaryContainer = Color(0xFF2C160D),
-    tertiary = Color(0xFF6A5D2F),          // olive
-    onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFF1E3A9),
-    onTertiaryContainer = Color(0xFF211A00),
-    error = Color(0xFFBA1A1A),
-    onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFFFFDAD6),
-    onErrorContainer = Color(0xFF410002),
-    background = Color(0xFFFAF9F5),        // pampas cream
-    onBackground = Color(0xFF1F1B17),
-    surface = Color(0xFFFAF9F5),
-    onSurface = Color(0xFF1F1B17),
-    surfaceVariant = Color(0xFFF2E9E2),
-    onSurfaceVariant = Color(0xFF52443C),
-    outline = Color(0xFF85736A),
-    outlineVariant = Color(0xFFD5C3B9),
-    surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF4F2EC),
-    surfaceContainer = Color(0xFFEEECE5),
-    surfaceContainerHigh = Color(0xFFE9E6DF),
-    surfaceContainerHighest = Color(0xFFE3E0D9),
-)
+    // Text
+    val TextPrimary = Color(0xFFF5F5F5)
+    val TextSecondary = Color(0xFF9B9B9E)
+    val TextTertiary = Color(0xFF6E6E72)
+
+    // Accents
+    val Terracotta = Color(0xFFD2795A)  // wordmark, new chat, logo
+    val Blue = Color(0xFF3B82F6)        // toggles, current selection
+    val Danger = Color(0xFFE5484D)
+
+    // Light mode equivalents — the app is designed dark, this is a courtesy.
+    val LightCanvas = Color(0xFFFAF9F7)
+    val LightCard = Color(0xFFFFFFFF)
+    val LightHairline = Color(0xFFE6E4E0)
+    val LightTextPrimary = Color(0xFF1A1A1A)
+    val LightTextSecondary = Color(0xFF6B6B6B)
+}
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFFFB69A),           // warm coral
-    onPrimary = Color(0xFF5C1C00),
-    primaryContainer = Color(0xFF7A2E0C),
-    onPrimaryContainer = Color(0xFFFFDBCB),
-    secondary = Color(0xFFE7BEAE),
-    onSecondary = Color(0xFF422A1F),
-    secondaryContainer = Color(0xFF5C4034),
-    onSecondaryContainer = Color(0xFFFFDBCB),
-    tertiary = Color(0xFFD5C78E),
-    onTertiary = Color(0xFF383000),
-    tertiaryContainer = Color(0xFF50471B),
-    onTertiaryContainer = Color(0xFFF1E3A9),
-    error = Color(0xFFFFB4AB),
-    onError = Color(0xFF690005),
-    errorContainer = Color(0xFF93000A),
-    onErrorContainer = Color(0xFFFFDAD6),
-    background = Color(0xFF1A1715),        // olive-tinted near black
-    onBackground = Color(0xFFEDE0D8),
-    surface = Color(0xFF1A1715),
-    onSurface = Color(0xFFEDE0D8),
-    surfaceVariant = Color(0xFF52443C),
-    onSurfaceVariant = Color(0xFFD5C3B9),
-    outline = Color(0xFF9E8B81),
-    outlineVariant = Color(0xFF52443C),
-    surfaceContainerLowest = Color(0xFF141210),
-    surfaceContainerLow = Color(0xFF221F1C),
-    surfaceContainer = Color(0xFF262320),
-    surfaceContainerHigh = Color(0xFF312D2A),
-    surfaceContainerHighest = Color(0xFF3C3834),
+    primary = Claude.Blue,
+    onPrimary = Color.White,
+    primaryContainer = Claude.Elevated,
+    onPrimaryContainer = Claude.TextPrimary,
+    secondary = Claude.Terracotta,
+    onSecondary = Color.White,
+    secondaryContainer = Claude.Card,
+    onSecondaryContainer = Claude.TextPrimary,
+    tertiary = Claude.Terracotta,
+    onTertiary = Color.White,
+    tertiaryContainer = Claude.Elevated,
+    onTertiaryContainer = Claude.TextPrimary,
+    error = Claude.Danger,
+    onError = Color.White,
+    errorContainer = Color(0xFF3B1416),
+    onErrorContainer = Color(0xFFFFB4AB),
+    background = Claude.Black,
+    onBackground = Claude.TextPrimary,
+    surface = Claude.Black,
+    onSurface = Claude.TextPrimary,
+    surfaceVariant = Claude.Card,
+    onSurfaceVariant = Claude.TextSecondary,
+    outline = Claude.TextTertiary,
+    outlineVariant = Claude.Hairline,
+    surfaceContainerLowest = Claude.Black,
+    surfaceContainerLow = Claude.Card,
+    surfaceContainer = Claude.Card,
+    surfaceContainerHigh = Claude.Elevated,
+    surfaceContainerHighest = Claude.CardPressed,
+    scrim = Color(0xCC000000),
 )
 
-// Generously rounded, Claude-style softness
+private val LightColors = lightColorScheme(
+    primary = Claude.Blue,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFE8F0FE),
+    onPrimaryContainer = Color(0xFF0B3D91),
+    secondary = Claude.Terracotta,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFF6E5DE),
+    onSecondaryContainer = Color(0xFF4A1F0F),
+    tertiary = Claude.Terracotta,
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFF6E5DE),
+    onTertiaryContainer = Color(0xFF4A1F0F),
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
+    background = Claude.LightCanvas,
+    onBackground = Claude.LightTextPrimary,
+    surface = Claude.LightCanvas,
+    onSurface = Claude.LightTextPrimary,
+    surfaceVariant = Claude.LightCard,
+    onSurfaceVariant = Claude.LightTextSecondary,
+    outline = Color(0xFF8A8A8A),
+    outlineVariant = Claude.LightHairline,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Claude.LightCard,
+    surfaceContainer = Claude.LightCard,
+    surfaceContainerHigh = Color(0xFFF2F0EC),
+    surfaceContainerHighest = Color(0xFFEBE9E4),
+)
+
+// Cards are generously rounded; pills are fully round.
 private val AppShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(32.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp),
 )
 
-// Editorial hierarchy: serif for display moments, sans for body
+// Serif for headings and moments of identity, sans for everything functional.
 private val AppTypography = Typography(
+    displaySmall = TextStyle(
+        fontFamily = FontFamily.Serif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 32.sp,
+        lineHeight = 40.sp,
+    ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Serif,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.Normal,
         fontSize = 28.sp,
         lineHeight = 36.sp,
     ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.Serif,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.Normal,
         fontSize = 24.sp,
         lineHeight = 32.sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.Serif,
         fontWeight = FontWeight.Medium,
-        fontSize = 22.sp,
+        fontSize = 21.sp,
         lineHeight = 28.sp,
+    ),
+    bodyLarge = TextStyle(
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 24.sp,
+    ),
+    bodyMedium = TextStyle(
+        fontWeight = FontWeight.Normal,
+        fontSize = 14.sp,
+        lineHeight = 21.sp,
     ),
 )
 
 @Composable
 fun KimiTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    // Dynamic colour is deliberately unused: the point is to look like Claude,
+    // not like the wallpaper.
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        // SDK_INT >= S is guaranteed by the check, so no try/catch around composables.
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context)
-            else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColors
-        else -> LightColors
-    }
-
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = if (darkTheme) DarkColors else LightColors,
         typography = AppTypography,
         shapes = AppShapes,
         content = content,
