@@ -44,6 +44,9 @@ object ModelCatalog {
         force: Boolean = false,
     ): List<KimiModel> {
         if (!force) cached?.let { return it }
+        // Real context windows first — everything below resolves against it.
+        ContextWindows.refresh()
+
         val fetched = withContext(Dispatchers.IO) {
             // Fetch both in parallel; a slow proxy shouldn't delay Zen.
             coroutineScope {
@@ -89,12 +92,18 @@ object ModelCatalog {
             val id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
             val known = Models.byId(id)
             val isVision = id.contains("vision") || id == "kimi-latest"
+            val stated = obj["description"]?.jsonPrimitive?.content.orEmpty()
             KimiModel(
                 id = id,
                 name = known?.name ?: obj["name"]?.jsonPrimitive?.content ?: id,
-                description = known?.description
-                    ?: obj["description"]?.jsonPrimitive?.content.orEmpty(),
-                contextTokens = known?.contextTokens ?: contextFromId(id),
+                description = known?.description ?: stated,
+                // models.dev, else the size the proxy states in its own
+                // description ("256k上下文"), else the built-in value.
+                contextTokens = ContextWindows.resolve(
+                    id = id,
+                    description = stated,
+                    fallback = known?.contextTokens ?: contextFromId(id),
+                ),
                 provider = Provider.KIMI,
                 vision = isVision,
                 reasoning = id.contains("thinking"),
@@ -129,7 +138,10 @@ object ModelCatalog {
                     append(if (free) "Free" else "Paid")
                     info?.description?.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
                 },
-                contextTokens = info?.context ?: 131_072,
+                contextTokens = ContextWindows.resolve(
+                    id = id,
+                    fallback = info?.context ?: 131_072,
+                ),
                 provider = Provider.ZEN,
                 vision = info?.vision == true,
                 reasoning = info?.reasoning == true,

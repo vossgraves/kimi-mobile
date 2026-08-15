@@ -358,7 +358,13 @@ object Models {
             val tenths = Math.round(tokens / 100_000.0)
             if (tenths % 10 == 0L) "${tenths / 10}M" else "${tenths / 10}.${tenths % 10}M"
         }
-        tokens >= 1_000 -> "${Math.round(tokens / 1_000.0)}K"
+        // Binary sizes read better as the power of two people expect:
+        // 32,768 is "32K", not "33K".
+        tokens >= 1_000 -> {
+            val binary = tokens / 1024.0
+            if (kotlin.math.abs(binary - Math.round(binary)) < 0.01) "${Math.round(binary)}K"
+            else "${Math.round(tokens / 1_000.0)}K"
+        }
         else -> tokens.toString()
     }
 }

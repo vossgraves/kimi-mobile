@@ -234,8 +234,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun setModel(id: String) {
         viewModelScope.launch {
             store.setModel(id)
-            // Keep the context ring honest about the new model's window.
-            store.setMaxContextTokens(Models.contextTokensFor(id))
+            // Prefer the window we actually fetched over the built-in guess.
+            val known = _availableModels.value.firstOrNull { it.id == id }?.contextTokens
+            store.setMaxContextTokens(known ?: Models.contextTokensFor(id))
             // A failed request leaves the connection flagged bad; switching
             // models should clear that so the new one isn't judged by it.
             _isConnected.value = null
