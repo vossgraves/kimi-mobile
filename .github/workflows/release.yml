@@ -1,13 +1,18 @@
-name: nightly
+name: release
 
+# Stable releases are deliberate: tag a version, or run this by hand.
 on:
   push:
-    branches: [dev]
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. v1.0.1'
+        required: true
 
 concurrency:
-  group: nightly
-  cancel-in-progress: true
+  group: stable-release
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -18,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - variant: release
@@ -60,24 +65,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          SHA_SHORT="$(git rev-parse --short HEAD)"
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
           for apk in ${{ matrix.path }}; do
             [ -f "$apk" ] || continue
-            cp "$apk" "dist/kimi-mobile-${{ matrix.variant }}-${SHA_SHORT}.apk"
+            cp "$apk" "dist/kimi-mobile-${VERSION}-${{ matrix.variant }}.apk"
           done
           ls -lh dist/
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-${{ matrix.variant }}
+          name: stable-${{ matrix.variant }}
           path: dist/*.apk
           if-no-files-found: error
 
   publish:
-    name: Publish nightly prerelease
+    name: Publish stable release
     needs: build
-    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
 
     steps:
@@ -88,62 +92,48 @@ jobs:
       - name: Collect APKs
         uses: actions/download-artifact@v4
         with:
-          pattern: nightly-*
+          pattern: stable-*
           merge-multiple: true
           path: dist
 
-      - name: Compose tag and notes
+      - name: Compose notes
         id: meta
         run: |
           set -euo pipefail
-          SHA_SHORT="$(git rev-parse --short HEAD)"
-          TAG="N$(date -u +%Y%m%d%H%M)-${SHA_SHORT}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "name=Nightly $(date -u +%Y-%m-%d) (${SHA_SHORT})" >> "$GITHUB_OUTPUT"
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-          # Changelog since the previous nightly tag, falling back to the last
-          # 20 commits on the first run.
-          PREV="$(git tag -l 'N*' --sort=-creatordate | head -n 1 || true)"
+          # Changelog since the previous stable tag.
+          PREV="$(git tag -l 'v*' --sort=-creatordate | grep -v "^${VERSION}$" | head -n 1 || true)"
           {
-            echo "Automated build from \`dev\` @ \`${SHA_SHORT}\`."
-            echo
             echo "### Changes"
             if [ -n "$PREV" ]; then
-              git log --pretty='- %s' "${PREV}..HEAD" | head -n 40
+              git log --pretty='- %s' "${PREV}..HEAD" | head -n 60
             else
-              git log --pretty='- %s' -n 20
+              git log --pretty='- %s' -n 30
             fi
             echo
-            echo "Nightlies can break. Switch to the Stable channel in"
-            echo "Settings → Updates for tested builds."
+            echo "Install \`kimi-mobile-${VERSION}-release.apk\` — the debug build is"
+            echo "only useful for troubleshooting."
           } > notes.md
           cat notes.md
 
-      - name: Create prerelease
+      - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release create "${{ steps.meta.outputs.tag }}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "${{ github.sha }}" \
-            --title "${{ steps.meta.outputs.name }}" \
-            --notes-file notes.md \
-            --prerelease \
-            dist/*.apk
-
-      - name: Prune old nightlies (keep newest 5)
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mapfile -t OLD < <(
-            gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt \
-              --jq '[.[] | select(.tagName | test("^N[0-9]+"))] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName'
-          )
-          for tag in "${OLD[@]:-}"; do
-            [ -z "$tag" ] && continue
-            echo "Deleting old nightly: $tag"
-            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
-          done
+          VERSION="${{ steps.meta.outputs.version }}"
+          # Stable: not a prerelease, and marked latest so the updater and the
+          # repo page both point at it.
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$VERSION" dist/*.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "${{ github.sha }}" \
+              --title "Kimi Mobile $VERSION" \
+              --notes-file notes.md \
+              --latest \
+              dist/*.apk
+          fi

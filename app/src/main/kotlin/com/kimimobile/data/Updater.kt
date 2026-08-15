@@ -35,9 +35,9 @@ object Updater {
 
     private const val REPO = "vossgraves/kimi-mobile"
     private const val RELEASES_URL = "https://api.github.com/repos/$REPO/releases"
-    private const val NIGHTLY_RUNS_URL =
-        "https://api.github.com/repos/$REPO/actions/workflows/nightly.yml/runs" +
-            "?branch=dev&status=success&per_page=1&exclude_pull_requests=true"
+    // Nightlies are published as dated prereleases (N202608151530-abc1234),
+    // stable as v-tagged releases marked latest — same scheme ArchiveTune uses.
+    private const val NIGHTLY_TAG_PREFIX = "N"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -99,42 +99,43 @@ object Updater {
     }
 
     private fun fetchNightly(): ReleaseInfo? {
-        val body = get(NIGHTLY_RUNS_URL) ?: return null
-        val runs = JSONObject(body).optJSONArray("workflow_runs") ?: return null
-        if (runs.length() == 0) return null
-        val run = runs.getJSONObject(0)
-        val sha = run.optString("head_sha").take(7)
-        val runId = run.optLong("id")
-        return ReleaseInfo(
-            tag = "nightly-$sha",
-            name = "Nightly $sha",
-            notes = run.optString("display_title").ifBlank { "Latest dev build" },
-            publishedAt = run.optString("updated_at"),
-            htmlUrl = run.optString("html_url"),
-            // Artifact downloads need auth, so we hand users the run page.
-            // Nightly releases published as a rolling GitHub release are used
-            // when present (see fetchNightlyRelease).
-            downloadUrl = fetchNightlyRelease() ?: null,
-            channel = UpdateChannel.NIGHTLY,
-        )
+        val body = get(RELEASES_URL) ?: return null
+        val releases = JSONArray(body)
+        for (i in 0 until releases.length()) {
+            val r = releases.getJSONObject(i)
+            if (r.optBoolean("draft")) continue
+            val tag = r.optString("tag_name")
+            // Newest nightly prerelease wins; the list is already newest-first.
+            if (!r.optBoolean("prerelease") || !tag.startsWith(NIGHTLY_TAG_PREFIX)) continue
+            val apk = pickApk(r.optJSONArray("assets"))
+            return ReleaseInfo(
+                tag = tag,
+                name = r.optString("name").ifBlank { tag },
+                notes = r.optString("body"),
+                publishedAt = r.optString("published_at"),
+                htmlUrl = r.optString("html_url"),
+                downloadUrl = apk?.first,
+                sizeBytes = apk?.second ?: 0L,
+                channel = UpdateChannel.NIGHTLY,
+            )
+        }
+        return null
     }
-
-    /** A rolling prerelease tagged `nightly` carries the installable APK. */
-    private fun fetchNightlyRelease(): String? = runCatching {
-        val body = get("$RELEASES_URL/tags/nightly") ?: return null
-        pickApk(JSONObject(body).optJSONArray("assets"))?.first
-    }.getOrNull()
 
     private fun pickApk(assets: JSONArray?): Pair<String, Long>? {
         if (assets == null) return null
+        var fallback: Pair<String, Long>? = null
         for (i in 0 until assets.length()) {
             val a = assets.getJSONObject(i)
             val name = a.optString("name")
-            if (name.endsWith(".apk", ignoreCase = true)) {
-                return a.optString("browser_download_url") to a.optLong("size")
-            }
+            if (!name.endsWith(".apk", ignoreCase = true)) continue
+            val entry = a.optString("browser_download_url") to a.optLong("size")
+            // The minified release build is the one worth installing; only
+            // fall back to debug if no release asset exists.
+            if (name.contains("release", ignoreCase = true)) return entry
+            if (fallback == null) fallback = entry
         }
-        return null
+        return fallback
     }
 
     /**
@@ -143,9 +144,9 @@ object Updater {
      */
     fun isNewer(remote: String, local: String): Boolean {
         if (remote.isBlank()) return false
-        if (remote.startsWith("nightly", ignoreCase = true)) {
-            // Nightlies are compared by commit, not version — treat a
-            // different sha as newer.
+        if (remote.startsWith(NIGHTLY_TAG_PREFIX) && remote.length > 9) {
+            // Nightly tags are N<yyyymmddHHMM>-<sha>: a different tag is a
+            // different build, and they sort chronologically.
             return !remote.equals(local, ignoreCase = true)
         }
         val r = versionParts(remote)

@@ -194,28 +194,32 @@ fun Composer(
 
                 Spacer(Modifier.weight(1f))
 
+                // Always present: it's Stop while a reply streams, Send
+                // otherwise. Hiding it mid-stream would strand the run with no
+                // way to cancel.
                 val canSend = input.isNotBlank() || pendingImages.isNotEmpty()
-                AnimatedVisibility(
-                    visible = isStreaming || canSend,
-                    enter = fadeIn() + scaleIn(initialScale = 0.85f),
-                    exit = fadeOut() + scaleOut(targetScale = 0.85f),
-                ) {
-                    Box(
-                        Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.onSurface)
-                            .clickable { if (isStreaming) onStop() else onSend() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            if (isStreaming) Icons.Default.Stop
-                            else Icons.AutoMirrored.Filled.ArrowUpward,
-                            contentDescription = if (isStreaming) "Stop" else "Send",
-                            tint = MaterialTheme.colorScheme.background,
-                            modifier = Modifier.size(19.dp),
+                val active = isStreaming || canSend
+                Box(
+                    Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (active) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.surfaceContainerHigh
                         )
-                    }
+                        .clickable(enabled = active) {
+                            if (isStreaming) onStop() else onSend()
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        if (isStreaming) Icons.Default.Stop
+                        else Icons.AutoMirrored.Filled.ArrowUpward,
+                        contentDescription = if (isStreaming) "Stop" else "Send",
+                        tint = if (active) MaterialTheme.colorScheme.background
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(19.dp),
+                    )
                 }
             }
         }
