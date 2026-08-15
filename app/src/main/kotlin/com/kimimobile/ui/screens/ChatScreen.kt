@@ -41,11 +41,13 @@ import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.TravelExplore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -122,6 +124,7 @@ fun ChatScreen(
     val settings by viewModel.settings.collectAsState()
     val pendingImages by viewModel.pendingImages.collectAsState()
     val tasks by viewModel.tasks.collectAsState()
+    val signInRequired by viewModel.signInRequired.collectAsState()
 
     var input by rememberSaveable { mutableStateOf("") }
     var showContextSheet by rememberSaveable { mutableStateOf(false) }
@@ -185,6 +188,32 @@ fun ChatScreen(
         onOpenModelSheet = { showModelSheet = true },
     )
 
+    if (signInRequired) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissSignIn,
+            icon = { Icon(Icons.Default.Lock, contentDescription = null) },
+            title = { Text("Sign in to use Kimi") },
+            text = {
+                Text(
+                    "Kimi models need your account. Sign in with your browser, or switch " +
+                        "to a free OpenCode Zen model, which needs no account at all."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.dismissSignIn()
+                    onOpenSettings()
+                }) { Text("Sign in") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.dismissSignIn()
+                    showModelSheet = true
+                }) { Text("Use a free model") }
+            },
+        )
+    }
+
     if (showContextSheet) {
         ContextSheet(
             context = contextState,
@@ -200,6 +229,7 @@ fun ChatScreen(
 
     if (showModelSheet) {
         ModelSheet(
+            models = Models.selectable(hasZenKey = settings.zenApiKey.isNotBlank()),
             selectedId = settings.model,
             onSelect = {
                 viewModel.setModel(it)
@@ -334,8 +364,7 @@ fun ChatScreenContent(
             Column(
                 Modifier
                     .fillMaxSize()
-                    .imePadding()
-                    .navigationBarsPadding(),
+                    .imePadding(),
             ) {
                 // Active capability chips — always visible so nothing is silently on.
                 ActiveCapabilityRow(
@@ -560,6 +589,7 @@ private fun ContextSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelSheet(
+    models: List<com.kimimobile.data.KimiModel>,
     selectedId: String,
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -582,7 +612,7 @@ private fun ModelSheet(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.height(420.dp),
             ) {
-                items(Models.all, key = { it.id }) { model ->
+                items(models, key = { it.id }) { model ->
                     val isFree = model.provider == com.kimimobile.data.Provider.ZEN
                     val selected = model.id == selectedId
                     Surface(
@@ -1050,7 +1080,13 @@ private fun Composer(
         color = MaterialTheme.colorScheme.surfaceContainer,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+        // The surface paints behind the gesture bar; padding keeps content
+        // above it. Without this the nav-bar strip renders as dead space.
+        Column(
+            Modifier
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
             // Staged attachments
             if (pendingImages.isNotEmpty()) {
                 LazyRow(

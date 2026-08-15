@@ -88,6 +88,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val tasks: StateFlow<List<AgentTask>> = _tasks.asStateFlow()
 
     /** Images staged in the composer, as base64 data URLs. */
+    /** Raised when a message needs Kimi auth that isn't set up yet. */
+    private val _signInRequired = MutableStateFlow(false)
+    val signInRequired: StateFlow<Boolean> = _signInRequired.asStateFlow()
+
     private val _pendingImages = MutableStateFlow<List<String>>(emptyList())
     val pendingImages: StateFlow<List<String>> = _pendingImages.asStateFlow()
 
@@ -181,8 +185,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val cfg = settings.value
         val images = _pendingImages.value
         if ((text.isBlank() && images.isEmpty()) || _isStreaming.value) return
-        if (cfg.token.isBlank()) {
-            _error.value = "Sign in or paste your refresh token in Settings first"
+        // Kimi needs a token; Zen free models don't. Ask for sign-in only when
+        // the selected model actually requires it.
+        val needsKimiAuth = Models.providerOf(cfg.model) == Provider.KIMI && cfg.token.isBlank()
+        if (needsKimiAuth) {
+            _signInRequired.value = true
             return
         }
         // "add web search", "turn off memory" — manage tools by asking.
@@ -201,6 +208,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun sendChat(text: String, cfg: AppSettings, images: List<String>) {
+        // Attachments imply vision: swap models for this turn rather than
+        // making you pick a vision model by hand.
+        val effectiveModel = if (images.isNotEmpty() &&
+            Models.byId(cfg.model)?.vision != true &&
+            Models.providerOf(cfg.model) == Provider.KIMI
+        ) {
+            Models.visionModelFor(cfg.maxContextTokens).id
+        } else {
+            cfg.model
+        }
         val userMsg = ChatMessage(
             role = MessageRole.USER,
             content = text.trim(),
@@ -218,8 +235,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _isConnected.value = null
         viewModelScope.launch {
             try {
-                val model = resolvedModel(cfg)
-                val (baseUrl, token) = endpointFor(cfg.model, cfg)
+                val model = Models.resolve(
+                    baseId = effectiveModel,
+                    search = cfg.searchEnabled,
+                    research = cfg.researchEnabled,
+                    math = cfg.mathEnabled,
+                )
+                val (baseUrl, token) = endpointFor(effectiveModel, cfg)
                 api.streamChat(baseUrl, token, model, history).collect { chunkJson ->
                     val delta = runCatching {
                         json.decodeFromString<StreamChunk>(chunkJson).choices.firstOrNull()?.delta
@@ -434,7 +456,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Zen's free models need no key; Kimi goes through the proxy. */
     private fun endpointFor(modelId: String, cfg: AppSettings): Pair<String, String> =
         if (Models.providerOf(modelId) == Provider.ZEN) {
-            Models.ZEN_BASE_URL to ""
+            // Free models answer without a key; paid ones use the one you add.
+            Models.ZEN_BASE_URL to cfg.zenApiKey
         } else {
             cfg.baseUrl to cfg.token
         }
@@ -663,15 +686,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         token: String = settings.value.token,
         model: String = settings.value.model,
     ): Boolean {
-        if (token.isBlank()) {
+        if (token.isBlank() && Models.providerOf(model) == Provider.KIMI) {
             _error.value = "Sign in first — no refresh token yet"
             return false
         }
         return try {
-            val models = api.listModels(baseUrl, token)
-            _error.value = if (models.isEmpty()) "Connected, but no models listed" else null
-            _isConnected.value = true
-            true
+            // Zen free models need no token at all.
+            if (Models.providerOf(model) == Provider.ZEN) {
+                api.listModels(Models.ZEN_BASE_URL, settings.value.zenApiKey)
+                _error.value = null
+                _isConnected.value = true
+                return true
+            }
+            val live = api.checkToken(baseUrl, token)
+            _error.value = if (live) null else "Token rejected — sign in again"
+            _isConnected.value = live
+            live
         } catch (e: Exception) {
             _error.value = e.message ?: "Connection failed"
             _isConnected.value = false
@@ -689,5 +719,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearError() {
         _error.value = null
+    }
+
+    fun dismissSignIn() {
+        _signInRequired.value = false
     }
 }

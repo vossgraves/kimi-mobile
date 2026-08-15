@@ -196,6 +196,25 @@ class ChatApi(
         }
     }
 
+    /**
+     * Validates a Kimi refresh token via the proxy's /token/check endpoint —
+     * /models answers even for a dead token, so it can't prove sign-in.
+     */
+    suspend fun checkToken(baseUrl: String, token: String): Boolean {
+        // /token/check sits at the server root, not under /v1.
+        val root = baseUrl.trimEnd('/').removeSuffix("/v1")
+        val payload = buildJsonObject { put("token", token) }.toString()
+        val request = Request.Builder()
+            .url("$root/token/check")
+            .post(payload.toRequestBody("application/json".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw IOException(friendlyError(response.code, text))
+            return text.contains("\"live\":true")
+        }
+    }
+
     /** Quick connectivity check: list available models. Returns the model ids. */
     suspend fun listModels(baseUrl: String, token: String): List<String> {
         val request = Request.Builder()

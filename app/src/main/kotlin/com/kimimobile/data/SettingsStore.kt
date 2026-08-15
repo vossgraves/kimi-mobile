@@ -21,6 +21,8 @@ data class AppSettings(
     val researchEnabled: Boolean = false,
     val mathEnabled: Boolean = false,
     val updateChannel: String = "STABLE",
+    /** Optional: unlocks Zen's paid catalogue (free models need no key). */
+    val zenApiKey: String = "",
     // Context window management. Set from the selected model (K2 = 256k,
     // Moonshot 8k/32k/128k); the web API reports no usage, so we estimate
     // from characters and compare against this max.
@@ -43,6 +45,7 @@ class SettingsStore(private val context: Context) {
         val RESEARCH = booleanPreferencesKey("research_enabled")
         val MATH = booleanPreferencesKey("math_enabled")
         val UPDATE_CHANNEL = stringPreferencesKey("update_channel")
+        val ZEN_API_KEY = stringPreferencesKey("zen_api_key")
         val MAX_CONTEXT_TOKENS = longPreferencesKey("max_context_tokens")
         val AUTO_COMPACT = booleanPreferencesKey("auto_compact")
         val COMPACT_THRESHOLD = intPreferencesKey("compact_threshold")
@@ -59,6 +62,7 @@ class SettingsStore(private val context: Context) {
             researchEnabled = prefs[Keys.RESEARCH] ?: false,
             mathEnabled = prefs[Keys.MATH] ?: false,
             updateChannel = prefs[Keys.UPDATE_CHANNEL] ?: "STABLE",
+            zenApiKey = prefs[Keys.ZEN_API_KEY] ?: "",
             maxContextTokens = prefs[Keys.MAX_CONTEXT_TOKENS] ?: AppSettings().maxContextTokens,
             autoCompact = prefs[Keys.AUTO_COMPACT] ?: AppSettings().autoCompact,
             compactThresholdPct = prefs[Keys.COMPACT_THRESHOLD] ?: AppSettings().compactThresholdPct,
@@ -102,6 +106,10 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setMathEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[Keys.MATH] = enabled }
+    }
+
+    suspend fun setZenApiKey(key: String) {
+        context.dataStore.edit { prefs -> prefs[Keys.ZEN_API_KEY] = key.trim() }
     }
 
     suspend fun setUpdateChannel(channel: String) {

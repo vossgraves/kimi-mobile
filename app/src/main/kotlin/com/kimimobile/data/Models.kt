@@ -20,6 +20,10 @@ data class KimiModel(
     val reasoning: Boolean = false,
     /** Kimi-only: capability suffixes the proxy understands. */
     val supportsSuffixes: Boolean = provider == Provider.KIMI,
+    /** Vision models are picked automatically when you attach an image. */
+    val hidden: Boolean = false,
+    /** Zen models outside the free tier need an API key. */
+    val requiresKey: Boolean = false,
 )
 
 object Models {
@@ -61,6 +65,7 @@ object Models {
         ),
         KimiModel(
             id = "kimi-latest",
+            hidden = true,
             name = "Kimi Latest",
             description = "Newest vision model — image understanding",
             contextTokens = 131_072,
@@ -68,6 +73,7 @@ object Models {
         ),
         KimiModel(
             id = "moonshot-v1-128k-vision-preview",
+            hidden = true,
             name = "Vision 128K",
             description = "Image + text analysis, 128k context",
             contextTokens = 131_072,
@@ -75,6 +81,7 @@ object Models {
         ),
         KimiModel(
             id = "moonshot-v1-32k-vision-preview",
+            hidden = true,
             name = "Vision 32K",
             description = "Image + text analysis, 32k context",
             contextTokens = 32_768,
@@ -94,6 +101,7 @@ object Models {
         ),
         KimiModel(
             id = "moonshot-v1-8k-vision-preview",
+            hidden = true,
             name = "Vision 8K",
             description = "Image + text analysis, 8k context",
             contextTokens = 8_192,
@@ -160,7 +168,77 @@ object Models {
         ),
     )
 
-    val all: List<KimiModel> = kimiModels + zenModels
+    /** Zen's paid catalogue — unlocked by adding an API key in Settings. */
+    private val zenKeyedModels = listOf(
+        KimiModel(
+            id = "kimi-k3",
+            name = "Kimi K3",
+            description = "Moonshot's flagship — 1M context, agentic coding",
+            contextTokens = 1_048_576,
+            provider = Provider.ZEN,
+            reasoning = true,
+            requiresKey = true,
+        ),
+        KimiModel(
+            id = "kimi-k2.6",
+            name = "Kimi K2.6",
+            description = "Previous Kimi flagship",
+            contextTokens = 262_144,
+            provider = Provider.ZEN,
+            reasoning = true,
+            requiresKey = true,
+        ),
+        KimiModel(
+            id = "claude-sonnet-5",
+            name = "Claude Sonnet 5",
+            description = "Anthropic — strong general reasoning and code",
+            contextTokens = 200_000,
+            provider = Provider.ZEN,
+            reasoning = true,
+            requiresKey = true,
+        ),
+        KimiModel(
+            id = "gpt-5.4",
+            name = "GPT-5.4",
+            description = "OpenAI flagship",
+            contextTokens = 400_000,
+            provider = Provider.ZEN,
+            reasoning = true,
+            requiresKey = true,
+        ),
+        KimiModel(
+            id = "gemini-3.5-flash",
+            name = "Gemini 3.5 Flash",
+            description = "Google — fast, very large context",
+            contextTokens = 1_048_576,
+            provider = Provider.ZEN,
+            requiresKey = true,
+        ),
+        KimiModel(
+            id = "glm-5.2",
+            name = "GLM-5.2",
+            description = "Zhipu — strong coding model",
+            contextTokens = 204_800,
+            provider = Provider.ZEN,
+            reasoning = true,
+            requiresKey = true,
+        ),
+    )
+
+    val all: List<KimiModel> = kimiModels + zenModels + zenKeyedModels
+
+    /** What the picker shows: no vision models, and paid ones only with a key. */
+    fun selectable(hasZenKey: Boolean): List<KimiModel> =
+        all.filterNot { it.hidden }.filter { !it.requiresKey || hasZenKey }
+
+    /**
+     * Vision is a property of the model, not a mode. When an image is attached
+     * we swap to the best vision model automatically and swap back after.
+     */
+    fun visionModelFor(contextTokens: Long): KimiModel =
+        all.filter { it.vision && it.provider == Provider.KIMI }
+            .minByOrNull { kotlin.math.abs(it.contextTokens - contextTokens) }
+            ?: all.first { it.vision }
 
     fun forProvider(provider: Provider): List<KimiModel> = all.filter { it.provider == provider }
 

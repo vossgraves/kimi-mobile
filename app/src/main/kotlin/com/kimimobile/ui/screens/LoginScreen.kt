@@ -5,17 +5,27 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -34,17 +44,22 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.kimimobile.data.SettingsStore
 import com.kimimobile.data.WebViewUa
-import com.kimimobile.data.resetAuthWebViewSession
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
+private const val KIMI_URL = "https://www.kimi.com"
+
 /**
- * WebView login: loads kimi.com, lets the user sign in (SMS/OTP or OAuth),
- * then lifts the refresh_token straight out of the page's localStorage.
+ * WebView login: loads kimi.com, lets you sign in normally, then lifts the
+ * refresh_token out of the page's localStorage.
+ *
+ * kimi.com is a JS-module SPA, which means it needs a WebChromeClient present
+ * and its own storage intact — clearing cookies before load left a blank page.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,11 +70,11 @@ fun LoginScreen(
     onBack: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var loading by remember { mutableStateOf(true) }
+    var progress by remember { mutableStateOf(0) }
     var grabbing by remember { mutableStateOf(false) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var canGoBack by remember { mutableStateOf(false) }
-    // Guards against the JS poll firing twice before navigation happens.
+    var loadError by remember { mutableStateOf<String?>(null) }
     val handled = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     val bridge = remember {
@@ -74,8 +89,6 @@ fun LoginScreen(
                             JSONObject(json).optString("refresh_token")
                         }.getOrDefault("")
                         if (refresh.isNotBlank()) {
-                            // Persist BEFORE navigating so the chat screen
-                            // never reads a stale empty token.
                             store.setToken(refresh)
                             grabbing = false
                             onLoggedIn()
@@ -89,9 +102,8 @@ fun LoginScreen(
         }
     }
 
-    // Polls localStorage for the token once the SPA is up. Survives client-side
-    // route changes (pushState doesn't reload the document). The interval is
-    // cleared once we have a token so it can't outlive the login.
+    // Polls localStorage for the token. Runs on every page, survives SPA route
+    // changes, and stops itself once it finds one.
     val grabScript = """
         (function(){
           if (window.__kimiGrab) return;
@@ -101,21 +113,18 @@ fun LoginScreen(
             tries++;
             try {
               var rt = localStorage.getItem('refresh_token');
-              if (rt) {
+              if (rt && rt.length > 20) {
                 clearInterval(id);
                 Android.onToken(JSON.stringify({refresh_token: rt}));
-              } else if (tries > 600) {
+              } else if (tries > 900) {
                 clearInterval(id);
               }
-            } catch(e) { clearInterval(id); }
+            } catch(e) {}
           }, 1000);
         })();
     """.trimIndent()
 
-    // In-page back before leaving the screen.
-    BackHandler(enabled = canGoBack) {
-        webView?.goBack()
-    }
+    BackHandler(enabled = canGoBack) { webView?.goBack() }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -146,7 +155,10 @@ fun LoginScreen(
                             strokeWidth = 2.dp,
                         )
                     }
-                    IconButton(onClick = { webView?.reload() }) {
+                    IconButton(onClick = {
+                        loadError = null
+                        webView?.reload()
+                    }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Reload")
                     }
                 },
@@ -162,36 +174,87 @@ fun LoginScreen(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.javaScriptCanOpenWindowsAutomatically = true
-                        settings.databaseEnabled = true
-                        // Derived from the installed WebView so it can't go stale.
-                        settings.userAgentString = WebViewUa.desktopClassMobile(ctx)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        with(settings) {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            javaScriptCanOpenWindowsAutomatically = true
+                            loadsImagesAutomatically = true
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            mediaPlaybackRequiresUserGesture = false
+                            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            // Derived from the installed WebView, minus the
+                            // "; wv" tag that gets SPAs to serve a blank shell.
+                            userAgentString = WebViewUa.desktopClassMobile(ctx)
+                        }
+                        CookieManager.getInstance().apply {
+                            setAcceptCookie(true)
+                            setAcceptThirdPartyCookies(this@apply, true)
+                        }
                         addJavascriptInterface(bridge, "Android")
+
+                        // Module scripts and OAuth popups need a chrome client;
+                        // without one kimi.com renders an empty page.
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                progress = newProgress
+                            }
+                        }
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView?, url: String?) {
-                                loading = false
                                 canGoBack = view?.canGoBack() == true
                                 view?.evaluateJavascript(grabScript, null)
                             }
+
+                            override fun onReceivedError(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                                error: WebResourceError?,
+                            ) {
+                                // Only surface failures of the main document.
+                                if (request?.isForMainFrame == true) {
+                                    loadError = "Couldn't reach kimi.com — check your connection."
+                                }
+                            }
                         }
                         webView = this
-                        // Clear any half-finished session before starting.
-                        resetAuthWebViewSession(ctx, this) {
-                            loadUrl("https://www.kimi.com")
-                        }
+                        loadUrl(KIMI_URL)
                     }
                 },
             )
-            if (loading) {
+
+            if (progress in 1..99) {
                 LinearProgressIndicator(
+                    progress = { progress / 100f },
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter),
-                    color = MaterialTheme.colorScheme.primary,
                 )
+            }
+
+            loadError?.let { message ->
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = {
+                        loadError = null
+                        webView?.loadUrl(KIMI_URL)
+                    }) {
+                        Text("Try again")
+                    }
+                }
             }
         }
     }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -16,9 +17,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Visibility
@@ -36,7 +42,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -56,11 +61,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.kimimobile.BuildConfig
 import com.kimimobile.data.Models
+import com.kimimobile.data.Provider
 import com.kimimobile.ui.ChatViewModel
-import java.util.Locale
+import com.kimimobile.ui.components.SettingsRow
+import com.kimimobile.ui.components.SettingsSection
+import com.kimimobile.ui.components.SettingsSwitch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,7 +89,9 @@ fun SettingsScreen(
 
     var baseUrl by rememberSaveable { mutableStateOf("") }
     var token by rememberSaveable { mutableStateOf("") }
+    var zenKey by rememberSaveable { mutableStateOf("") }
     var showToken by rememberSaveable { mutableStateOf(false) }
+    var showZenKey by rememberSaveable { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var maxTokensText by rememberSaveable { mutableStateOf("") }
@@ -87,11 +99,11 @@ fun SettingsScreen(
     var thresholdPct by rememberSaveable { mutableIntStateOf(80) }
     var loaded by rememberSaveable { mutableStateOf(false) }
 
-    // Load persisted settings once, then let edits flow back out.
     LaunchedEffect(settings) {
         if (!loaded) {
             baseUrl = settings.baseUrl
             token = settings.token
+            zenKey = settings.zenApiKey
             maxTokensText = settings.maxContextTokens.toString()
             autoCompact = settings.autoCompact
             thresholdPct = settings.compactThresholdPct
@@ -99,11 +111,15 @@ fun SettingsScreen(
         }
     }
 
-    // Debounced autosave.
     LaunchedEffect(baseUrl, token, loaded) {
         if (!loaded) return@LaunchedEffect
         delay(500)
         viewModel.store.save(baseUrl, token, settings.model)
+    }
+    LaunchedEffect(zenKey, loaded) {
+        if (!loaded) return@LaunchedEffect
+        delay(500)
+        viewModel.store.setZenApiKey(zenKey)
     }
     LaunchedEffect(maxTokensText, loaded) {
         if (!loaded) return@LaunchedEffect
@@ -116,6 +132,9 @@ fun SettingsScreen(
         viewModel.setAutoCompact(autoCompact)
         viewModel.setCompactThreshold(thresholdPct)
     }
+
+    val currentModel = Models.byId(settings.model) ?: Models.default
+    val signedIn = settings.token.isNotBlank()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -136,343 +155,246 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp),
+                .padding(horizontal = 16.dp)
+                .navigationBarsPadding(),
         ) {
-            Spacer(Modifier.height(8.dp))
-
-            // ---- Model ----
-            SectionLabel("Model")
-            Text(
-                "Tap to switch. Capability toggles live in the composer's + menu.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            Models.all.forEach { model ->
-                ModelRow(
-                    name = model.name,
-                    description = model.description,
-                    contextTokens = model.contextTokens,
-                    vision = model.vision,
-                    reasoning = model.reasoning,
-                    selected = settings.model == model.id,
-                    onClick = { viewModel.setModel(model.id) },
-                )
-                Spacer(Modifier.height(6.dp))
-            }
-
-            // ---- Connection ----
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Connection")
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it },
-                label = { Text("API base URL") },
-                placeholder = { Text("http://10.0.2.2:8000/v1") },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("Refresh token") },
-                placeholder = { Text("eyJhbGciOi…") },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                visualTransformation = if (showToken) VisualTransformation.None else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { showToken = !showToken }) {
-                        Icon(
-                            if (showToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (showToken) "Hide token" else "Show token",
-                        )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(
+            // ---- Account ----
+            SettingsSection(
+                title = "Account",
+                subtitle = if (signedIn) "Signed in to Kimi" else "Not signed in",
+            ) {
+                if (signedIn) {
+                    SettingsRow(
+                        title = "Sign out",
+                        subtitle = "Clears your saved Kimi token",
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        onClick = {
+                            scope.launch {
+                                viewModel.store.clearToken()
+                                token = ""
+                                snackbarHostState.showSnackbar("Signed out")
+                            }
+                        },
+                    )
+                } else {
+                    SettingsRow(
+                        title = "Sign in with browser",
+                        subtitle = "Recommended — grabs your token automatically",
+                        icon = Icons.AutoMirrored.Filled.Login,
+                        onClick = onOpenLogin,
+                    )
+                }
+                SettingsRow(
+                    title = "Test connection",
+                    subtitle = testResult ?: "Checks your token against the server",
+                    icon = Icons.Default.Check,
                     onClick = {
-                        testing = true
-                        testResult = null
-                        scope.launch {
-                            val ok = viewModel.testConnection(baseUrl, token, settings.model)
-                            testing = false
-                            testResult = if (ok) "Connected" else "Connection failed"
+                        if (!testing) {
+                            testing = true
+                            testResult = null
+                            scope.launch {
+                                val ok = viewModel.testConnection(baseUrl, token, settings.model)
+                                testing = false
+                                testResult = if (ok) "Connected" else "Failed — check token and URL"
+                            }
                         }
                     },
-                    enabled = !testing,
-                ) {
-                    if (testing) {
-                        CircularProgressIndicator(
-                            Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Testing…")
-                    } else {
-                        Text("Test connection")
-                    }
-                }
-                testResult?.let {
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    trailing = {
+                        if (testing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    },
+                )
+            }
+
+            // ---- Model ----
+            SettingsSection(
+                title = "Model",
+                subtitle = "${currentModel.name} · ${
+                    String.format(Locale.US, "%,d", currentModel.contextTokens)
+                } tokens",
+            ) {
+                Models.selectable(hasZenKey = settings.zenApiKey.isNotBlank()).forEach { model ->
+                    SettingsRow(
+                        title = model.name,
+                        subtitle = model.description,
+                        icon = if (model.provider == Provider.ZEN) Icons.Default.AutoAwesome else null,
+                        onClick = { viewModel.setModel(model.id) },
+                        trailing = {
+                            if (model.id == settings.model) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        },
                     )
                 }
             }
 
-            // ---- Account ----
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Account")
-            Spacer(Modifier.height(8.dp))
-            if (settings.token.isBlank()) {
-                Button(
-                    onClick = onOpenLogin,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Sign in with browser")
-                }
-            } else {
-                OutlinedButton(
-                    onClick = {
-                        scope.launch {
-                            viewModel.store.clearToken()
-                            token = ""
-                            snackbarHostState.showSnackbar("Signed out — token cleared")
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.Logout, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Sign out")
+            // ---- Providers ----
+            SettingsSection(
+                title = "Providers",
+                subtitle = "Kimi runs through your proxy; Zen's free models need nothing",
+            ) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    OutlinedTextField(
+                        value = baseUrl,
+                        onValueChange = { baseUrl = it },
+                        label = { Text("Kimi proxy URL") },
+                        placeholder = { Text("http://10.0.2.2:8000/v1") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it },
+                        label = { Text("Kimi refresh token") },
+                        placeholder = { Text("eyJhbGciOi…") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        visualTransformation = if (showToken) VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { showToken = !showToken }) {
+                                Icon(
+                                    if (showToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (showToken) "Hide" else "Show",
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = zenKey,
+                        onValueChange = { zenKey = it },
+                        label = { Text("OpenCode Zen API key (optional)") },
+                        placeholder = { Text("Unlocks K3, Claude, GPT, Gemini…") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        visualTransformation = if (showZenKey) VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                        leadingIcon = { Icon(Icons.Default.Key, contentDescription = null) },
+                        trailingIcon = {
+                            IconButton(onClick = { showZenKey = !showZenKey }) {
+                                Icon(
+                                    if (showZenKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (showZenKey) "Hide" else "Show",
+                                )
+                            }
+                        },
+                        supportingText = {
+                            Text("Free Zen models work without a key — this only adds the paid ones")
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
 
-            // ---- Context window ----
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Context window")
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = String.format(
+            // ---- Context ----
+            SettingsSection(
+                title = "Context",
+                subtitle = String.format(
                     Locale.US,
-                    "Estimated usage: %d%% (%,d / %,d tokens)",
+                    "%d%% used · %,d / %,d tokens",
                     (contextState.pct * 100).toInt(),
                     contextState.tokens,
                     contextState.maxTokens,
                 ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = maxTokensText,
-                onValueChange = { new -> maxTokensText = new.filter { it.isDigit() }.take(9) },
-                label = { Text("Max context tokens") },
-                placeholder = { Text("262144") },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                supportingText = { Text("Auto-set from the model; override if you hit limits sooner") },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Auto-compact", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Summarize old turns when the window fills up",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            ) {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    OutlinedTextField(
+                        value = maxTokensText,
+                        onValueChange = { new -> maxTokensText = new.filter { it.isDigit() }.take(9) },
+                        label = { Text("Max context tokens") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        supportingText = { Text("Set from the model; lower it if you hit limits sooner") },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Switch(checked = autoCompact, onCheckedChange = { autoCompact = it })
-            }
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Compact at",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
+                SettingsSwitch(
+                    title = "Auto-compact",
+                    subtitle = "Summarize old turns when the window fills up",
+                    icon = Icons.Default.Memory,
+                    checked = autoCompact,
+                    onCheckedChange = { autoCompact = it },
                 )
-                Text(
-                    "$thresholdPct%",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Slider(
-                value = thresholdPct.toFloat(),
-                onValueChange = { thresholdPct = it.toInt() },
-                valueRange = 40f..95f,
-                enabled = autoCompact,
-            )
-            OutlinedButton(
-                onClick = { viewModel.compactNow() },
-                enabled = !isCompacting,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (isCompacting) {
-                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Compacting…")
-                } else {
-                    Text("Compact conversation now")
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Compact at",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "$thresholdPct%",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Slider(
+                        value = thresholdPct.toFloat(),
+                        onValueChange = { thresholdPct = it.toInt() },
+                        valueRange = 40f..95f,
+                        enabled = autoCompact,
+                    )
                 }
+                SettingsRow(
+                    title = if (isCompacting) "Compacting…" else "Compact now",
+                    subtitle = "Summarize this conversation immediately",
+                    onClick = { if (!isCompacting) viewModel.compactNow() },
+                    trailing = {
+                        if (isCompacting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    },
+                )
             }
 
             // ---- Agent ----
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Agent & tools")
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Agent mode", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Let the model call tools (search, fetch, math) to finish tasks",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
+            SettingsSection(
+                title = "Agent & tools",
+                subtitle = "Tools, subagents and the marketplace",
+            ) {
+                SettingsSwitch(
+                    title = "Agent mode",
+                    subtitle = "Model calls tools and delegates to subagents",
+                    icon = Icons.Default.Science,
                     checked = settings.agentEnabled,
                     onCheckedChange = viewModel::setAgentEnabled,
                 )
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onOpenMarketplace,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Storefront, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Browse marketplace")
+                SettingsRow(
+                    title = "Marketplace",
+                    subtitle = "${settings.installedSkills.size} tools enabled",
+                    icon = Icons.Default.Storefront,
+                    onClick = onOpenMarketplace,
+                )
             }
 
             // ---- Updates ----
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Updates")
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onOpenUpdates,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.SystemUpdate, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Check for updates")
+            SettingsSection(title = "Updates") {
+                SettingsRow(
+                    title = "Check for updates",
+                    subtitle = "${settings.updateChannel.lowercase()
+                        .replaceFirstChar { it.uppercase() }} channel · v${BuildConfig.VERSION_NAME}",
+                    icon = Icons.Default.SystemUpdate,
+                    onClick = onOpenUpdates,
+                )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Channel: ${settings.updateChannel.lowercase().replaceFirstChar { it.uppercase() }} · v${com.kimimobile.BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
 
             // ---- Conversation ----
-            Spacer(Modifier.height(18.dp))
-            SectionLabel("Conversation")
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { viewModel.clear() },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.DeleteOutline, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Clear conversation")
+            SettingsSection(title = "Conversation") {
+                SettingsRow(
+                    title = "Clear conversation",
+                    subtitle = "Deletes all messages in this chat",
+                    icon = Icons.Default.DeleteOutline,
+                    onClick = { viewModel.clear() },
+                )
             }
 
             Spacer(Modifier.height(32.dp))
         }
-    }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.primary,
-    )
-}
-
-@Composable
-private fun ModelRow(
-    name: String,
-    description: String,
-    contextTokens: Long,
-    vision: Boolean,
-    reasoning: Boolean,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurface,
-                    )
-                    if (vision) Badge("vision")
-                    if (reasoning) Badge("thinking")
-                }
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    String.format(Locale.US, "%,d token context", contextTokens),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline,
-                )
-            }
-            if (selected) {
-                Icon(
-                    Icons.Default.Check,
-                    contentDescription = "Selected",
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun Badge(text: String) {
-    Surface(
-        shape = RoundedCornerShape(6.dp),
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onTertiaryContainer,
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-        )
     }
 }
