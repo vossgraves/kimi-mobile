@@ -65,6 +65,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -516,22 +517,29 @@ private fun ChatMessageList(
     val scope = rememberCoroutineScope()
 
     /**
-     * Scrolls so the END of the last message rests at the bottom of the
-     * viewport. scrollToItem alone aligns an item's *top* to the viewport top,
-     * which for a long reply leaves you stranded mid-message — that's why
-     * "jump to latest" appeared to do nothing.
+     * Puts the END of the last message at the bottom of the viewport.
+     *
+     * Two traps here. scrollToItem aligns an item's *top* to the viewport top,
+     * so on a reply taller than the screen it lands where the message begins —
+     * which looked like "it jumps to where I sent, not to the answer". And
+     * measuring layoutInfo straight after a scroll reads the height from
+     * before the newly streamed text was laid out, so a single correction is
+     * always one frame stale. Correct repeatedly until it settles.
      */
     suspend fun snapToEnd(animate: Boolean) {
         if (messages.isEmpty()) return
         val index = messages.lastIndex
         if (animate) listState.animateScrollToItem(index) else listState.scrollToItem(index)
-        // Then push past the remainder of that item, if it's taller than the
-        // viewport.
-        val info = listState.layoutInfo
-        val last = info.visibleItemsInfo.lastOrNull { it.index == index } ?: return
-        val overshoot = (last.offset + last.size - info.viewportEndOffset).toFloat()
-        if (overshoot > 0f) {
+
+        repeat(5) {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull { it.index == index }
+                ?: return@repeat
+            val overshoot = (last.offset + last.size - info.viewportEndOffset).toFloat()
+            if (overshoot <= 1f) return
             if (animate) listState.animateScrollBy(overshoot) else listState.scrollBy(overshoot)
+            // Let the next frame lay out before measuring again.
+            withFrameNanos { }
         }
     }
 
@@ -558,6 +566,22 @@ private fun ChatMessageList(
     }
     LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length, following) {
         if (following) snapToEnd(animate = false)
+    }
+
+    // While a reply streams the last item grows every chunk. Nudging to the
+    // tail each frame keeps the newest line visible instead of parking at the
+    // point the message started.
+    LaunchedEffect(isStreaming, following) {
+        if (!isStreaming || !following) return@LaunchedEffect
+        while (isStreaming && following) {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            if (last != null && last.index == info.totalItemsCount - 1) {
+                val overshoot = (last.offset + last.size - info.viewportEndOffset).toFloat()
+                if (overshoot > 1f) listState.scrollBy(overshoot)
+            }
+            withFrameNanos { }
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
