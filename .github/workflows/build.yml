@@ -17,12 +17,37 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # APK first and published immediately: a failing screenshot test should
-      # never stop you from installing the build.
-      - name: Build APK
+      # Release first — it's the one worth installing. Minified with R8 and
+      # resource shrinking, so it's a fraction of the debug APK's size.
+      - name: Build release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Report APK sizes
+        run: |
+          echo "### APK sizes" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Variant | Size |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for apk in app/build/outputs/apk/*/*.apk; do
+            [ -f "$apk" ] || continue
+            size=$(du -h "$apk" | cut -f1)
+            echo "| $(basename "$apk") | $size |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          cat "$GITHUB_STEP_SUMMARY"
+
+      # Published before tests run: a failing screenshot test must never stop
+      # you from having something installable.
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: apk-debug
@@ -34,8 +59,7 @@ jobs:
         continue-on-error: true
         run: ./gradlew testDebugUnitTest --stacktrace
 
-      # Gradle's console output truncates test exceptions to one line, so the
-      # real cause only exists in the XML reports.
+      # Gradle truncates test exceptions to one line; the cause is in the XML.
       - name: Print test failures
         if: steps.tests.outcome == 'failure'
         run: |
@@ -75,9 +99,8 @@ jobs:
             app/build/test-results/**
           if-no-files-found: ignore
 
-      # Surface test status without blocking the APK artifact.
       - name: Fail if tests failed
         if: steps.tests.outcome == 'failure'
         run: |
-          echo "APK is published above; tests still need fixing."
+          echo "APKs are published above; tests still need fixing."
           exit 1
