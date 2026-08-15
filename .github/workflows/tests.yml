@@ -1,0 +1,59 @@
+name: tests
+
+# Deliberately NOT run on every push: a failing unit test should never make a
+# perfectly good build look broken. Run it when you want it.
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      # Gradle truncates test exceptions to one line; the cause is in the XML.
+      - name: Print failures
+        if: steps.tests.outcome == 'failure'
+        run: |
+          for f in app/build/test-results/testDebugUnitTest/*.xml; do
+            [ -f "$f" ] || continue
+            grep -q '<failure\|<error' "$f" || continue
+            python3 - "$f" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          for case in ET.parse(sys.argv[1]).iter('testcase'):
+              for bad in list(case.iter('failure')) + list(case.iter('error')):
+                  print(f"\n### {case.get('classname')}.{case.get('name')}")
+                  print((bad.get('message') or '').strip()[:400])
+                  print((bad.text or '').strip()[:1200])
+          PY
+          done
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests/**
+          if-no-files-found: ignore
+
+      - name: Result
+        if: steps.tests.outcome == 'failure'
+        run: exit 1

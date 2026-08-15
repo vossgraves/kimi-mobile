@@ -1,11 +1,10 @@
-name: Nightly
+name: nightly
 
 on:
   push:
     branches: [dev]
   workflow_dispatch:
 
-# One nightly at a time; a newer push supersedes an in-flight build.
 concurrency:
   group: nightly
   cancel-in-progress: true
@@ -14,47 +13,87 @@ permissions:
   contents: write
 
 jobs:
-  nightly:
-    name: Build and publish nightly
+  build:
+    name: Build ${{ matrix.variant }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: release
+            task: assembleRelease
+            path: app/build/outputs/apk/release/*.apk
+          - variant: debug
+            task: assembleDebug
+            path: app/build/outputs/apk/debug/*.apk
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
 
-      - name: Stamp nightly version
+      - name: Restore keystore
+        if: matrix.variant == 'release' && env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          SHA_SHORT="$(git rev-parse --short HEAD)"
-          echo "SHA_SHORT=$SHA_SHORT" >> "$GITHUB_ENV"
-          echo "Building nightly-$SHA_SHORT"
+          echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+          {
+            echo "storeFile=release.keystore"
+            echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
+            echo "keyAlias=${{ secrets.KEY_ALIAS }}"
+            echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+          } > keystore.properties
 
-      # Nightlies ship the minified release build — same size benefits as
-      # stable, just built from dev.
-      - name: Build release APK
-        run: ./gradlew assembleRelease --no-daemon
+      - name: Build
+        run: ./gradlew ${{ matrix.task }} --stacktrace
 
-      - name: Run tests
-        continue-on-error: true
-        run: ./gradlew testDebugUnitTest --no-daemon
-
-      - name: Rename APK
+      - name: Stage APK
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk \
-             "dist/kimi-mobile-nightly-${SHA_SHORT}.apk"
+          SHA_SHORT="$(git rev-parse --short HEAD)"
+          for apk in ${{ matrix.path }}; do
+            [ -f "$apk" ] || continue
+            cp "$apk" "dist/kimi-mobile-${{ matrix.variant }}-nightly-${SHA_SHORT}.apk"
+          done
           ls -lh dist/
 
-      - name: Publish rolling nightly release
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.variant }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+  publish:
+    name: Publish rolling nightly
+    needs: build
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect APKs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-*
+          merge-multiple: true
+          path: dist
+
+      - name: Short SHA
+        run: echo "SHA_SHORT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      # A rolling `nightly` tag is what the in-app updater reads.
+      - name: Publish
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
@@ -62,10 +101,8 @@ jobs:
           body: |
             Automated build from `dev` @ ${{ env.SHA_SHORT }}.
 
-            Nightlies can break. Switch to the Stable channel in
-            Settings → Updates if you want tested builds only.
+            Nightlies can break. Switch to Stable in Settings → Updates
+            if you want tested builds only.
           prerelease: true
           files: dist/*.apk
-          # Rolling tag: the in-app updater always reads `nightly`.
           make_latest: false
-

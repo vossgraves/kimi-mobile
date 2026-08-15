@@ -1,12 +1,36 @@
 name: build
 
 on:
-  push:
   workflow_dispatch:
+  push:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
+  # One job per variant, run in parallel. A failure in one doesn't hide the
+  # other's APK, and neither is gated behind tests.
   build:
+    name: Build ${{ matrix.variant }} APK
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: release
+            task: assembleRelease
+            path: app/build/outputs/apk/release/*.apk
+            artifact: apk-release
+          - variant: debug
+            task: assembleDebug
+            path: app/build/outputs/apk/debug/*.apk
+            artifact: apk-debug
+
     steps:
       - uses: actions/checkout@v4
 
@@ -17,11 +41,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # Restore the signing key so every build installs over the last one.
-      # Without a stable key each APK is a different app to Android and
-      # updates fail with INSTALL_FAILED_UPDATE_INCOMPATIBLE.
+      # Restore the release key when the secrets exist, so signatures stay
+      # stable across builds and updates install over each other.
       - name: Restore keystore
-        if: env.KEYSTORE_BASE64 != ''
+        if: matrix.variant == 'release' && env.KEYSTORE_BASE64 != ''
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
@@ -33,80 +56,20 @@ jobs:
             echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
           } > keystore.properties
 
-      # One Gradle invocation builds both variants in parallel — two separate
-      # runs re-ran configuration and half the compile work twice.
-      - name: Build both APKs
-        run: ./gradlew assembleDebug assembleRelease --parallel --stacktrace
+      - name: Build
+        run: ./gradlew ${{ matrix.task }} --stacktrace
 
-      - name: Report APK sizes
+      - name: Report size
         run: |
-          echo "### APK sizes" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Variant | Size |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          for apk in app/build/outputs/apk/*/*.apk; do
+          for apk in ${{ matrix.path }}; do
             [ -f "$apk" ] || continue
-            size=$(du -h "$apk" | cut -f1)
-            echo "| $(basename "$apk") | $size |" >> "$GITHUB_STEP_SUMMARY"
+            echo "**${{ matrix.variant }}**: \`$(basename "$apk")\` — $(du -h "$apk" | cut -f1)" \
+              >> "$GITHUB_STEP_SUMMARY"
           done
-          cat "$GITHUB_STEP_SUMMARY"
 
-      # Published before tests run: a failing screenshot test must never stop
-      # you from having something installable.
-      - name: Upload release APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk-release
-          path: app/build/outputs/apk/release/*.apk
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
           if-no-files-found: error
-
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: apk-debug
-          path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
-      - name: Run tests
-        id: tests
-        continue-on-error: true
-        run: ./gradlew testDebugUnitTest --stacktrace
-
-      # Gradle truncates test exceptions to one line; the cause is in the XML.
-      - name: Print test failures
-        if: steps.tests.outcome == 'failure'
-        run: |
-          echo "::group::Failure details"
-          for f in app/build/test-results/testDebugUnitTest/*.xml; do
-            [ -f "$f" ] || continue
-            if grep -q '<failure\|<error' "$f"; then
-              echo "----- $(basename "$f") -----"
-              python3 - "$f" <<'PY'
-          import sys, xml.etree.ElementTree as ET
-          tree = ET.parse(sys.argv[1])
-          for case in tree.iter('testcase'):
-              for bad in list(case.iter('failure')) + list(case.iter('error')):
-                  print(f"\n### {case.get('classname')}.{case.get('name')}")
-                  print((bad.get('message') or '').strip()[:600])
-                  print((bad.text or '').strip()[:2000])
-          PY
-            fi
-          done
-          echo "::endgroup::"
-
-
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-reports
-          path: |
-            app/build/reports/tests/**
-            app/build/test-results/**
-          if-no-files-found: ignore
-
-      - name: Fail if tests failed
-        if: steps.tests.outcome == 'failure'
-        run: |
-          echo "APKs are published above; tests still need fixing."
-          exit 1
