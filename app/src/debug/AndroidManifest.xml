@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Robolectric's createComposeRule() launches a bare ComponentActivity. It isn't
+  in the main manifest (nothing else needs it), so screenshot tests failed with
+  "Unable to resolve activity for Intent ... ComponentActivity". Declaring it in
+  the debug variant keeps it out of release builds.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="false"
+            android:theme="@style/Theme.KimiMobile" />
+    </application>
+</manifest>
