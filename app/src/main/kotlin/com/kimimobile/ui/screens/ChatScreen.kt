@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -513,24 +515,49 @@ private fun ChatMessageList(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    val atBottom by remember {
-        derivedStateOf {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
-                ?: return@derivedStateOf true
-            last.index >= listState.layoutInfo.totalItemsCount - 1 &&
-                last.offset + last.size <= listState.layoutInfo.viewportEndOffset + 120
+    /**
+     * Scrolls so the END of the last message rests at the bottom of the
+     * viewport. scrollToItem alone aligns an item's *top* to the viewport top,
+     * which for a long reply leaves you stranded mid-message — that's why
+     * "jump to latest" appeared to do nothing.
+     */
+    suspend fun snapToEnd(animate: Boolean) {
+        if (messages.isEmpty()) return
+        val index = messages.lastIndex
+        if (animate) listState.animateScrollToItem(index) else listState.scrollToItem(index)
+        // Then push past the remainder of that item, if it's taller than the
+        // viewport.
+        val info = listState.layoutInfo
+        val last = info.visibleItemsInfo.lastOrNull { it.index == index } ?: return
+        val overshoot = (last.offset + last.size - info.viewportEndOffset).toFloat()
+        if (overshoot > 0f) {
+            if (animate) listState.animateScrollBy(overshoot) else listState.scrollBy(overshoot)
         }
     }
 
-    // Follow the stream only while parked at the bottom — otherwise scrolling
-    // up during a reply is impossible.
+    val atBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf true
+            last.index >= info.totalItemsCount - 1 &&
+                last.offset + last.size <= info.viewportEndOffset + 80
+        }
+    }
+
+    // Follow the stream only while parked at the bottom, so scrolling up
+    // during a reply actually works.
     var following by remember { mutableStateOf(true) }
-    LaunchedEffect(atBottom) { if (atBottom) following = true }
+
+    // Resume following only when the user *settles* at the bottom — checking
+    // mid-fling made this flip back on immediately after a scroll up.
+    LaunchedEffect(atBottom, listState.isScrollInProgress) {
+        if (atBottom && !listState.isScrollInProgress) following = true
+    }
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress && !atBottom) following = false
     }
     LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length, following) {
-        if (following && messages.isNotEmpty()) listState.scrollToItem(messages.lastIndex)
+        if (following) snapToEnd(animate = false)
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -550,8 +577,10 @@ private fun ChatMessageList(
             }
         }
 
+        // Keyed on position, not on the follow flag: the button is for getting
+        // back to the bottom, so it shows whenever you aren't there.
         AnimatedVisibility(
-            visible = !following,
+            visible = !atBottom,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -565,7 +594,7 @@ private fun ChatMessageList(
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable {
                         following = true
-                        scope.launch { listState.animateScrollToItem(messages.lastIndex) }
+                        scope.launch { snapToEnd(animate = true) }
                     },
                 contentAlignment = Alignment.Center,
             ) {
