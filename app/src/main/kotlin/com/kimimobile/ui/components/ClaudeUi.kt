@@ -163,7 +163,7 @@ fun ClaudeToggle(
         targetValue = when {
             !enabled -> MaterialTheme.colorScheme.surfaceContainerHigh
             checked -> Claude.Blue
-            else -> trackOff,
+            else -> trackOff
         },
         label = "toggle-track",
     )

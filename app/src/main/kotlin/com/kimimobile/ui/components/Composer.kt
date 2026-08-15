@@ -25,7 +25,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Stop
@@ -39,7 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.SolidColor
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -214,7 +214,7 @@ fun Composer(
                 ) {
                     Icon(
                         if (isStreaming) Icons.Default.Stop
-                        else Icons.AutoMirrored.Filled.ArrowUpward,
+                        else Icons.Default.ArrowUpward,
                         contentDescription = if (isStreaming) "Stop" else "Send",
                         tint = if (active) MaterialTheme.colorScheme.background
                         else MaterialTheme.colorScheme.onSurfaceVariant,

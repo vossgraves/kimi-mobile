@@ -35,7 +35,8 @@ object Models {
             id = "kimi-k3",
             name = "Kimi K3",
             description = "Moonshot's flagship — what kimi.com itself runs",
-            contextTokens = 262_144,
+            // 1,048,576 per models.dev and Moonshot's own listing.
+            contextTokens = 1_048_576,
             reasoning = true,
         ),
         KimiModel(
