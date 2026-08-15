@@ -338,7 +338,7 @@ async function getResearchUsage(refreshToken: string): Promise<{
  * @param refConvId 引用会话ID
  * @param retryCount 重试次数
  */
-async function createCompletion(model = MODEL_NAME, messages: any[], refreshToken: string, refConvId?: string, retryCount = 0, segmentId?: string): Promise<IStreamMessage> {
+async function createCompletion(model = MODEL_NAME, messages: any[], refreshToken: string, refConvId?: string, retryCount = 0, segmentId?: string, tools?: any[]): Promise<IStreamMessage> {
   return (async () => {
     logger.info(messages);
 
@@ -365,6 +365,22 @@ async function createCompletion(model = MODEL_NAME, messages: any[], refreshToke
     // 伪装调用获取用户信息
     fakeRequest(refreshToken)
       .catch(err => logger.warn('fakeRequest请求失败，继续主要流程:', err.message));
+
+    // kimi.com has no function calling; tell the model to emit TOOL_CALL lines
+    // so the proxy can turn them into real tool_calls on the way back.
+    if (tools && tools.length && !segmentId) {
+      const toolList = tools.map((t: any) => {
+        const f = t.function || {};
+        return `- ${f.name}: ${f.description || ''} (args: ${JSON.stringify(f.parameters?.properties ? Object.keys(f.parameters.properties) : [])})`;
+      }).join('\n');
+      const instr = {
+        role: 'system',
+        content: 'You can call tools. To call one, output exactly one line and nothing else on that line:\n' +
+          'TOOL_CALL:<name>|<args as JSON>\n\nAvailable tools:\n' + toolList +
+          '\n\nA TOOL_RESULT line will follow. Use tools when they help; otherwise answer directly.'
+      };
+      messages = [instr, ...messages];
+    }
 
     // 消息预处理
     const sendMessages = messagesPrepare(messages, !!refConvId);
@@ -431,6 +447,31 @@ async function createCompletion(model = MODEL_NAME, messages: any[], refreshToke
     // 接收流为输出文本
     const answer = await receiveStream(model, convId, stream);
 
+    // Turn the model's TOOL_CALL text into a real OpenAI tool_calls block, so
+    // opencode's agent loop (which only reads structured tool_calls) fires.
+    if (tools && tools.length) {
+      const content: string = answer.choices[0]?.message?.content || '';
+      const match = content.match(/TOOL_CALL:([\w.-]+)\|([^\n]*)/);
+      if (match) {
+        const name = match[1].trim();
+        const toolDef = tools.find((t: any) => (t.function?.name || t.name) === name);
+        const args = coerceToolArgs(match[2], toolDef);
+        if (toolDef) {
+          const callId = 'call_' + util.uuid().replace(/-/g, '').slice(0, 24);
+          answer.choices[0].message = {
+            role: 'assistant',
+            content: null,
+            tool_calls: [{
+              id: callId,
+              type: 'function',
+              function: { name, arguments: args }
+            }]
+          };
+          answer.choices[0].finish_reason = 'tool_calls';
+        }
+      }
+    }
+
     // 如果上次请求生成长度超限，则继续请求
     if (answer.choices[0].finish_reason == 'length' && answer.segment_id) {
       const continueAnswer = await createCompletion(model, [], refreshToken, convId, retryCount, answer.segment_id);
@@ -468,7 +509,7 @@ async function createCompletion(model = MODEL_NAME, messages: any[], refreshToke
  * @param refConvId 引用会话ID
  * @param retryCount 重试次数
  */
-async function createCompletionStream(model = MODEL_NAME, messages: any[], refreshToken: string, refConvId?: string, retryCount = 0) {
+async function createCompletionStream(model = MODEL_NAME, messages: any[], refreshToken: string, refConvId?: string, retryCount = 0, tools?: any[]) {
   return (async () => {
     logger.info(messages);
 
@@ -495,6 +536,23 @@ async function createCompletionStream(model = MODEL_NAME, messages: any[], refre
     // 伪装调用获取用户信息
     fakeRequest(refreshToken)
       .catch(err => logger.error(err));
+
+    // Same TOOL_CALL contract as the non-streaming path — kimi.com has no
+    // function calling, so the model is told to emit a line the proxy can
+    // convert back into a real tool_calls delta.
+    if (tools && tools.length) {
+      const toolList = tools.map((t: any) => {
+        const f = t.function || {};
+        const args = f.parameters?.properties ? Object.keys(f.parameters.properties) : [];
+        return `- ${f.name}: ${f.description || ''} (args: ${JSON.stringify(args)})`;
+      }).join('\n');
+      messages = [{
+        role: 'system',
+        content: 'You can call tools. To call one, output exactly one line and nothing else on that line:\n' +
+          'TOOL_CALL:<name>|<args as JSON>\n\nAvailable tools:\n' + toolList +
+          '\n\nA TOOL_RESULT line will follow. Use tools when they help; otherwise answer directly.'
+      }, ...messages];
+    }
 
     const sendMessages = messagesPrepare(messages, !!refConvId);
 
@@ -552,7 +610,7 @@ async function createCompletionStream(model = MODEL_NAME, messages: any[], refre
       // 如果引用会话将不会清除，因为我们不知道什么时候你会结束会话
       !refConvId && removeConversation(convId, refreshToken)
         .catch(err => console.error(err));
-    });
+    }, tools);
   })()
     .catch(err => {
       if (retryCount < MAX_RETRY_COUNT) {
@@ -560,7 +618,7 @@ async function createCompletionStream(model = MODEL_NAME, messages: any[], refre
         logger.warn(`Try again after ${RETRY_DELAY / 1000}s...`);
         return (async () => {
           await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-          return createCompletionStream(model, messages, refreshToken, refConvId, retryCount + 1);
+          return createCompletionStream(model, messages, refreshToken, refConvId, retryCount + 1, tools);
         })();
       }
       throw err;
@@ -640,52 +698,114 @@ function extractRefFileUrls(messages: any[]) {
  * @param messages 参考gpt系列消息格式，多轮对话请完整提供上下文
  * @param isRefConv 是否为引用会话
  */
+/**
+ * Coerces the model's TOOL_CALL argument text into valid JSON object syntax.
+ *
+ * Small models are sloppy here — they emit ["k":"v"], single quotes, trailing
+ * commas, or bare text. opencode feeds arguments straight to JSON.parse, so a
+ * malformed blob silently breaks the tool. Repair what's recognisable and fall
+ * back to a single named field only as a last resort.
+ */
+function coerceToolArgs(raw: string, tool?: any): string {
+  let text = (raw || '').trim();
+  // Strip code fences the model sometimes wraps around JSON.
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim();
+
+  const tryParse = (candidate: string): string | null => {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return JSON.stringify(parsed);
+      }
+    } catch { /* not valid yet */ }
+    return null;
+  };
+
+  let ok = tryParse(text);
+  if (ok) return ok;
+
+  // ["key":"value"] -> {"key":"value"}  (the most common mistake)
+  if (text.startsWith('[') && text.endsWith(']') && text.includes(':')) {
+    ok = tryParse('{' + text.slice(1, -1) + '}');
+    if (ok) return ok;
+  }
+  // Bare key:value pairs without braces.
+  if (!text.startsWith('{') && text.includes(':')) {
+    ok = tryParse('{' + text + '}');
+    if (ok) return ok;
+  }
+  // Single quotes -> double quotes, and drop trailing commas.
+  const normalised = text
+    .replace(/'/g, '"')
+    .replace(/,\s*([}\]])/g, '$1');
+  ok = tryParse(normalised);
+  if (ok) return ok;
+  ok = tryParse('{' + normalised.replace(/^[[{]|[\]}]$/g, '') + '}');
+  if (ok) return ok;
+
+  // Give up on structure: hand the text to the tool's first declared
+  // parameter so it still receives something usable.
+  const props = tool?.function?.parameters?.properties;
+  const firstParam = props ? Object.keys(props)[0] : undefined;
+  return JSON.stringify({ [firstParam || 'input']: text });
+}
+
+/**
+ * Flattens the conversation into a single user message for the web API.
+ *
+ * opencode (and any real agent) sends tool_calls and tool results; the old
+ * version assumed content was a string or an array of {type:"text"}, so a
+ * tool message crashed the merge with "Cannot read properties of undefined"
+ * and surfaced to the caller as the opaque -2001. Now every role and shape is
+ * normalised into readable lines before flattening.
+ */
 function messagesPrepare(messages: any[], isRefConv = false) {
-  let content;
-  if (isRefConv || messages.length < 2) {
-    content = messages.reduce((content, message) => {
-      if (_.isArray(message.content)) {
-        return message.content.reduce((_content, v) => {
-          if (!_.isObject(v) || v['type'] != 'text') return _content;
-          return _content + `${v["text"] || ""}\n`;
-        }, content);
-      }
-      return content += `${message.role == 'user' ? wrapUrlsToTags(message.content) : message.content}\n`;
-    }, '')
-    logger.info("\n透传内容：\n" + content);
-  }
-  else {
-    // 注入消息提升注意力
-    let latestMessage = messages[messages.length - 1];
-    let hasFileOrImage = Array.isArray(latestMessage.content)
-      && latestMessage.content.some(v => (typeof v === 'object' && ['file', 'image_url'].includes(v['type'])));
-    // 第二轮开始注入system prompt
-    if (hasFileOrImage) {
-      let newFileMessage = {
-        "content": "关注用户最新发送文件和消息",
-        "role": "system"
-      };
-      messages.splice(messages.length - 1, 0, newFileMessage);
-      logger.info("注入提升尾部文件注意力system prompt");
-    } else {
-      let newTextMessage = {
-        "content": "关注用户最新的消息",
-        "role": "system"
-      };
-      messages.splice(messages.length - 1, 0, newTextMessage);
-      logger.info("注入提升尾部消息注意力system prompt");
+  // Turn any message into readable lines, whatever shape its content is.
+  const toText = (m: any): string => {
+    const role = m.role || 'user';
+    let text = '';
+    if (_.isString(m.content)) {
+      text = m.content;
+    } else if (_.isArray(m.content)) {
+      text = m.content
+        .map((v: any) => {
+          if (_.isString(v)) return v;
+          if (!_.isObject(v)) return '';
+          if (v.type === 'text') return v.text || '';
+          if (v.type === 'tool_result') {
+            return _.isString(v.content) ? v.content
+              : _.isArray(v.content) ? v.content.map((c: any) => c.text || '').join('') : '';
+          }
+          if (v.type === 'image_url') return '[image]';
+          return v.text || v.content || '';
+        })
+        .join('');
     }
-    content = messages.reduce((content, message) => {
-      if (_.isArray(message.content)) {
-        return message.content.reduce((_content, v) => {
-          if (!_.isObject(v) || v['type'] != 'text') return _content;
-          return _content + `${message.role || "user"}:${v["text"] || ""}\n`;
-        }, content);
-      }
-      return content += `${message.role || "user"}:${message.role == 'user' ? wrapUrlsToTags(message.content) : message.content}\n`;
-    }, '')
-    logger.info("\n对话合并：\n" + content);
+    // Tool calls the assistant made — the model must see them to continue.
+    if (_.isArray(m.tool_calls) && m.tool_calls.length) {
+      const calls = m.tool_calls
+        .map((c: any) => `${c.function?.name || c.name || 'tool'}(${c.function?.arguments || c.args || ''})`)
+        .join(', ');
+      text = (text ? text + '\n' : '') + `[called: ${calls}]`;
+    }
+    if (role === 'tool') {
+      return `tool result: ${text || m.content || ''}`;
+    }
+    if (role === 'assistant' && !text && !m.content) return '';
+    return `${role}:${role === 'user' ? wrapUrlsToTags(text) : text}`;
+  };
+
+  const lines = messages
+    .map(toText)
+    .filter((l: string) => l.trim().length > 0);
+
+  // Kimi's web API wants a single user message; the "focus on latest" hint
+  // keeps long agent transcripts anchored on the current step.
+  if (lines.length > 1) {
+    lines.splice(lines.length - 1, 0, 'system:关注用户最新的消息');
   }
+  const content = lines.join('\n') + '\n';
+  logger.info("\n合并后内容：\n" + content);
 
   return [
     { role: 'user', content }
@@ -989,7 +1109,7 @@ async function receiveStream(model: string, convId: string, stream: any): Promis
  * @param stream 消息流
  * @param endCallback 传输结束回调
  */
-function createTransStream(model: string, convId: string, stream: any, endCallback?: Function) {
+function createTransStream(model: string, convId: string, stream: any, endCallback?: Function, tools?: any[]) {
   // 消息创建时间
   const created = util.unixTimestamp();
   // 创建转换流
@@ -1009,6 +1129,10 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
     segment_id: '',
     created
   })}\n\n`);
+  // With tools active the reply must be buffered: TOOL_CALL can only be
+  // detected once the full text exists. Without tools we stream as before.
+  const bufferForTools = !!(tools && tools.length);
+  let buffered = '';
   const parser = createParser(event => {
     try {
       if (event.type !== "event") return;
@@ -1020,6 +1144,11 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
       if (result.event == 'cmpl') {
         const exceptCharIndex = result.text.indexOf("�");
         const chunk = result.text.substring(0, exceptCharIndex == -1 ? result.text.length : exceptCharIndex);
+        if (bufferForTools) {
+          buffered += (searchFlag ? '\n' : '') + chunk;
+          if (searchFlag) searchFlag = false;
+          return;
+        }
         const data = `data: ${JSON.stringify({
           id: convId,
           model,
@@ -1044,6 +1173,79 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
       }
       // 处理结束或错误
       else if (result.event == 'all_done' || result.event == 'error') {
+        // Buffered mode: decide between a structured tool call and plain text.
+        if (bufferForTools) {
+          const match = buffered.match(/TOOL_CALL:([\w.-]+)\|([^\n]*)/);
+          const named = match ? (tools as any[]).find(
+            (t: any) => (t.function?.name || t.name) === match[1].trim()
+          ) : undefined;
+
+          if (match && named) {
+            const args = coerceToolArgs(match[2], named);
+            const callId = 'call_' + util.uuid().replace(/-/g, '').slice(0, 24);
+            // opencode reads choices[0].delta.tool_calls — give it exactly that.
+            !transStream.closed && transStream.write(`data: ${JSON.stringify({
+              id: convId,
+              model,
+              object: 'chat.completion.chunk',
+              choices: [{
+                index: 0,
+                delta: {
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: [{
+                    index: 0,
+                    id: callId,
+                    type: 'function',
+                    function: { name: match[1].trim(), arguments: args }
+                  }]
+                },
+                finish_reason: null
+              }],
+              segment_id: segmentId,
+              created
+            })}\n\n`);
+            !transStream.closed && transStream.write(`data: ${JSON.stringify({
+              id: convId,
+              model,
+              object: 'chat.completion.chunk',
+              choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              segment_id: segmentId,
+              created
+            })}\n\n`);
+            !transStream.closed && transStream.end('data: [DONE]\n\n');
+            endCallback && endCallback();
+            return;
+          }
+
+          // No tool call — replay the text we held back.
+          const text = buffered + (result.event == 'error'
+            ? '\n[内容由于不合规被停止生成，我们换个话题吧]' : '');
+          if (text) {
+            !transStream.closed && transStream.write(`data: ${JSON.stringify({
+              id: convId,
+              model,
+              object: 'chat.completion.chunk',
+              choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+              segment_id: segmentId,
+              created
+            })}\n\n`);
+          }
+          !transStream.closed && transStream.write(`data: ${JSON.stringify({
+            id: convId,
+            model,
+            object: 'chat.completion.chunk',
+            choices: [{ index: 0, delta: {}, finish_reason: lengthExceed ? 'length' : 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            segment_id: segmentId,
+            created
+          })}\n\n`);
+          !transStream.closed && transStream.end('data: [DONE]\n\n');
+          endCallback && endCallback();
+          return;
+        }
+
         const data = `data: ${JSON.stringify({
           id: convId,
           model,

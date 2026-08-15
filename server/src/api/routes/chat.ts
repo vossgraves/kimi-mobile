@@ -25,7 +25,7 @@ export default {
             // 检测 token 类型
             const tokenType = detectTokenType(token);
 
-            let { model, conversation_id: convId, messages, stream, use_search } = request.body;
+            let { model, conversation_id: convId, messages, stream, use_search, tools } = request.body;
 
             if (use_search)
                 model = 'kimi-search';
@@ -53,12 +53,12 @@ export default {
                 const selectedToken = _.sample(tokens);
 
                 if (stream) {
-                    const streamResponse = await chat.createCompletionStream(model, messages, selectedToken, convId);
+                    const streamResponse = await chat.createCompletionStream(model, messages, selectedToken, convId, 0, tools);
                     return new Response(streamResponse, {
                         type: "text/event-stream"
                     });
                 } else {
-                    return await chat.createCompletion(model, messages, selectedToken, convId);
+                    return await chat.createCompletion(model, messages, selectedToken, convId, 0, undefined, tools);
                 }
             }
         }
