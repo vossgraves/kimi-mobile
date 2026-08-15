@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,10 +65,10 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
-    val messages by viewModel.messages
-    val isStreaming by viewModel.isStreaming
-    val error by viewModel.error
-    val isConnected by viewModel.isConnected
+    val messages by viewModel.messages.collectAsState()
+    val isStreaming by viewModel.isStreaming.collectAsState()
+    val error by viewModel.error.collectAsState()
+    val isConnected by viewModel.isConnected.collectAsState()
 
     var input by rememberSaveable { mutableStateOf("") }
 

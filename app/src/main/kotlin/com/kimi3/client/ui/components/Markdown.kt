@@ -14,8 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.ContentCopyimport androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -163,7 +162,12 @@ private fun parseInline(text: String): List<InlineSpan> {
     return spans
 }
 
-private fun inlineToAnnotated(spans: List<InlineSpan>): AnnotatedString = buildAnnotatedString {
+private fun inlineToAnnotated(
+    spans: List<InlineSpan>,
+    onSurface: Color,
+    primary: Color,
+    codeBg: Color,
+): AnnotatedString = buildAnnotatedString {
     spans.forEach { span ->
         when (span) {
             is InlineSpan.Text -> append(span.text)
@@ -172,14 +176,15 @@ private fun inlineToAnnotated(spans: List<InlineSpan>): AnnotatedString = buildA
             is InlineSpan.InlineCode -> withStyle(
                 SpanStyle(
                     fontFamily = FontFamily.Monospace,
-                    background = MaterialTheme.colorScheme.surfaceVariant,
+                    color = onSurface,
+                    background = codeBg,
                 )
             ) { append(span.text) }
             is InlineSpan.Link -> {
                 pushStringAnnotation(tag = "URL", annotation = span.url)
                 withStyle(
                     SpanStyle(
-                        color = MaterialTheme.colorScheme.primary,
+                        color = primary,
                         textDecoration = TextDecoration.Underline,
                     )
                 ) { append(span.text) }
@@ -196,14 +201,17 @@ fun MarkdownText(
     codeBackground: Color = MaterialTheme.colorScheme.surfaceContainerHighest,
 ) {
     val context = LocalContext.current
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val primary = MaterialTheme.colorScheme.primary
+    val codeBg = MaterialTheme.colorScheme.surfaceVariant
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         parseMarkdown(markdown).forEach { block ->
             when (block) {
                 is MarkdownBlock.Paragraph -> {
                     Text(
-                        text = inlineToAnnotated(block.inline),
+                        text = inlineToAnnotated(block.inline, onSurface, primary, codeBg),
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = onSurface,
                     )
                 }
                 is MarkdownBlock.Heading -> {
@@ -228,7 +236,7 @@ fun MarkdownText(
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = inlineToAnnotated(parseInline(item)),
+                                text = inlineToAnnotated(parseInline(item), onSurface, primary, codeBg),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )

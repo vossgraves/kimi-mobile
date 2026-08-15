@@ -1,11 +1,10 @@
 package com.kimi3.client.ui.components
 
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,11 +30,9 @@ fun TypingIndicator(modifier: Modifier = Modifier) {
     val phase by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
+        // infiniteRepeatable requires a duration-based spec (spring is physics-based, not allowed here)
         animationSpec = infiniteRepeatable(
-            animation = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow,
-            ),
+            animation = tween(durationMillis = 900, easing = androidx.compose.animation.core.FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "typing-phase",

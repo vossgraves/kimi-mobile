@@ -10,7 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.kimi3.client.data.ChatViewModel
+import com.kimi3.client.ui.ChatViewModel
 import com.kimi3.client.ui.screens.ChatScreen
 import com.kimi3.client.ui.screens.LoginScreen
 import com.kimi3.client.ui.screens.SettingsScreen

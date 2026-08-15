@@ -99,14 +99,11 @@ fun KimiTheme(
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {
+        // SDK_INT >= S is guaranteed by the check, so no try/catch needed around composables.
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            try {
-                val context = LocalContext.current
-                if (darkTheme) dynamicDarkColorScheme(context)
-                else dynamicLightColorScheme(context)
-            } catch (_: Exception) {
-                if (darkTheme) DarkColors else LightColors
-            }
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context)
+            else dynamicLightColorScheme(context)
         }
         darkTheme -> DarkColors
         else -> LightColors
