@@ -2,6 +2,14 @@ import _ from 'lodash';
 
 // 支持的模型列表，基于官方API返回的模型
 const SUPPORTED_MODELS = [
+    // kimi-k3 (what kimi.com itself runs; passes through to the web API)
+    {
+        "id": "kimi-k3",
+        "name": "Kimi K3",
+        "object": "model",
+        "owned_by": "moonshot",
+        "description": "Moonshot's flagship — 1M context, agentic coding and reasoning"
+    },
     // kimi-k2 模型
     {
         "id": "kimi-k2-0905-preview",

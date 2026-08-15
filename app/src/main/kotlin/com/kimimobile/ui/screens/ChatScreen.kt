@@ -205,6 +205,8 @@ fun ChatScreen(
             pendingImages = pendingImages,
             modelLabel = currentModel?.name ?: settings.model,
             modelSuffix = when {
+                // Mode reads as its own thing, not part of the model name —
+                // "Kimi K3 · Build" was passing as a second model.
                 agentMode != AgentMode.CHAT -> agentMode.label
                 currentModel?.reasoning == true -> effort.label
                 else -> null

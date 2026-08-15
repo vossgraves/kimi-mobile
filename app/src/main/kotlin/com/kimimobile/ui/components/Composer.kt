@@ -182,11 +182,20 @@ fun Composer(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (!modelSuffix.isNullOrBlank()) {
-                        Spacer(Modifier.width(5.dp))
+                        Spacer(Modifier.width(7.dp))
+                        // A divider + distinct colour so it never passes as part
+                        // of the model's own name.
+                        Box(
+                            Modifier
+                                .width(1.dp)
+                                .height(13.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant)
+                        )
+                        Spacer(Modifier.width(7.dp))
                         Text(
                             modelSuffix,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.secondary,
                             maxLines = 1,
                         )
                     }
