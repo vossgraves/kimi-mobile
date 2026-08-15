@@ -32,6 +32,8 @@ data class ApiMessage(
 @Serializable
 data class StreamChunk(
     val choices: List<StreamChoice> = emptyList(),
+    val usage: UsageInfo? = null,
+    val cost: String? = null,
 )
 
 @Serializable
@@ -58,8 +60,25 @@ data class ModelListResponse(val data: List<ModelInfo> = emptyList())
 @Serializable
 data class ModelInfo(val id: String)
 
+/** Usage/cost as reported per response — Zen sends both, Kimi fakes usage. */
+data class SpendReport(
+    val promptTokens: Long = 0,
+    val completionTokens: Long = 0,
+    val costUsd: Double = 0.0,
+)
+
 @Serializable
-private data class CompletionResponse(val choices: List<CompletionChoice> = emptyList())
+private data class CompletionResponse(
+    val choices: List<CompletionChoice> = emptyList(),
+    val usage: UsageInfo? = null,
+    val cost: String? = null,
+)
+
+@Serializable
+data class UsageInfo(
+    @SerialName("prompt_tokens") val promptTokens: Long = 0,
+    @SerialName("completion_tokens") val completionTokens: Long = 0,
+)
 
 @Serializable
 private data class CompletionChoice(val message: CompletionMessage? = null)
@@ -71,6 +90,8 @@ private val JSON = Json { ignoreUnknownKeys = true }
 
 /** Minimal OpenAI-compatible client, hand-rolled SSE (no extra deps). */
 class ChatApi(
+    /** Invoked whenever a response reports usage, for the credit counter. */
+    var onSpend: ((SpendReport) -> Unit)? = null,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(300, TimeUnit.SECONDS)
@@ -191,8 +212,9 @@ class ChatApi(
         client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw IOException(friendlyError(response.code, text))
-            return JSON.decodeFromString<CompletionResponse>(text)
-                .choices.firstOrNull()?.message?.content.orEmpty()
+            val parsed = JSON.decodeFromString<CompletionResponse>(text)
+            reportSpend(parsed.usage, parsed.cost)
+            return parsed.choices.firstOrNull()?.message?.content.orEmpty()
         }
     }
 
@@ -227,6 +249,18 @@ class ChatApi(
             if (!response.isSuccessful) throw IOException(friendlyError(response.code, text))
             return JSON.decodeFromString<ModelListResponse>(text).data.map { it.id }
         }
+    }
+
+    private fun reportSpend(usage: UsageInfo?, cost: String?) {
+        val callback = onSpend ?: return
+        if (usage == null && cost == null) return
+        callback(
+            SpendReport(
+                promptTokens = usage?.promptTokens ?: 0,
+                completionTokens = usage?.completionTokens ?: 0,
+                costUsd = cost?.toDoubleOrNull() ?: 0.0,
+            )
+        )
     }
 
     /** Turns proxy/upstream errors into something a human can act on. */

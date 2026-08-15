@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -15,6 +17,7 @@ import com.kimimobile.ui.screens.ChatScreen
 import com.kimimobile.ui.screens.LoginScreen
 import com.kimimobile.ui.screens.MarketplaceScreen
 import com.kimimobile.ui.screens.SettingsScreen
+import com.kimimobile.ui.screens.WelcomeScreen
 import com.kimimobile.ui.screens.UpdateScreen
 import com.kimimobile.ui.theme.KimiTheme
 
@@ -30,13 +33,36 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Chat, Settings, Login, Marketplace, Updates }
+private enum class Screen { Welcome, Chat, Settings, Login, Marketplace, Updates }
 
 @Composable
 private fun App(viewModel: ChatViewModel = viewModel()) {
-    var screen by remember { mutableStateOf(Screen.Chat) }
+    val settings by viewModel.settings.collectAsState()
+    var screen by remember { mutableStateOf<Screen?>(null) }
+
+    // First launch lands on Welcome; afterwards straight into the chat.
+    LaunchedEffect(settings.onboarded) {
+        if (screen == null) {
+            screen = if (settings.onboarded) Screen.Chat else Screen.Welcome
+        }
+    }
 
     when (screen) {
+        null -> Unit
+        Screen.Welcome -> WelcomeScreen(
+            onSignInKimi = {
+                viewModel.completeOnboarding(defaultToFreeModel = false)
+                screen = Screen.Login
+            },
+            onUseZenKey = {
+                viewModel.completeOnboarding(defaultToFreeModel = false)
+                screen = Screen.Settings
+            },
+            onSkip = {
+                viewModel.completeOnboarding(defaultToFreeModel = true)
+                screen = Screen.Chat
+            },
+        )
         Screen.Chat -> ChatScreen(
             viewModel = viewModel,
             onOpenSettings = { screen = Screen.Settings },
@@ -52,7 +78,9 @@ private fun App(viewModel: ChatViewModel = viewModel()) {
         Screen.Login -> LoginScreen(
             store = viewModel.store,
             onLoggedIn = { screen = Screen.Chat },
-            onBack = { screen = Screen.Settings },
+            // Back from a first-run login should land in the chat, not in
+            // Settings the user never opened.
+            onBack = { screen = if (settings.token.isBlank()) Screen.Chat else Screen.Settings },
         )
         Screen.Marketplace -> MarketplaceScreen(
             viewModel = viewModel,

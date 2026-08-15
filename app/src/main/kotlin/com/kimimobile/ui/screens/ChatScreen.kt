@@ -95,6 +95,7 @@ import com.kimimobile.data.SkillEngine
 import com.kimimobile.ui.ChatMessage
 import com.kimimobile.ui.ChatViewModel
 import com.kimimobile.ui.ContextState
+import com.kimimobile.ui.SessionSpend
 import com.kimimobile.ui.MessageRole
 import com.kimimobile.ui.components.AgentTask
 import com.kimimobile.ui.components.MarkdownText
@@ -125,6 +126,8 @@ fun ChatScreen(
     val pendingImages by viewModel.pendingImages.collectAsState()
     val tasks by viewModel.tasks.collectAsState()
     val signInRequired by viewModel.signInRequired.collectAsState()
+    val sessionSpend by viewModel.sessionSpend.collectAsState()
+    val availableModels by viewModel.availableModels.collectAsState()
 
     var input by rememberSaveable { mutableStateOf("") }
     var showContextSheet by rememberSaveable { mutableStateOf(false) }
@@ -175,6 +178,8 @@ fun ChatScreen(
         mathEnabled = settings.mathEnabled,
         pendingImages = pendingImages,
         tasks = tasks,
+        sessionSpend = sessionSpend,
+        isZenModel = currentModel.provider == com.kimimobile.data.Provider.ZEN,
         supportsVision = currentModel.vision,
         onAttachImage = {
             imagePicker.launch(
@@ -229,7 +234,9 @@ fun ChatScreen(
 
     if (showModelSheet) {
         ModelSheet(
-            models = Models.selectable(hasZenKey = settings.zenApiKey.isNotBlank()),
+            models = availableModels
+                .filterNot { it.hidden }
+                .filter { !it.requiresKey || settings.zenApiKey.isNotBlank() },
             selectedId = settings.model,
             onSelect = {
                 viewModel.setModel(it)
@@ -282,6 +289,8 @@ fun ChatScreenContent(
     mathEnabled: Boolean = false,
     pendingImages: List<String> = emptyList(),
     tasks: List<AgentTask> = emptyList(),
+    sessionSpend: SessionSpend = SessionSpend(),
+    isZenModel: Boolean = false,
     supportsVision: Boolean = false,
     onAttachImage: () -> Unit = {},
     onRemoveImage: (String) -> Unit = {},
@@ -394,6 +403,8 @@ fun ChatScreenContent(
                     onOpenToolsSheet = onOpenToolsSheet,
                     contextState = contextState,
                     onOpenContextSheet = onOpenContextSheet,
+                    sessionSpend = sessionSpend,
+                    isZenModel = isZenModel,
                 )
             }
         }
@@ -1075,6 +1086,8 @@ private fun Composer(
     onOpenToolsSheet: () -> Unit,
     contextState: ContextState,
     onOpenContextSheet: () -> Unit,
+    sessionSpend: SessionSpend,
+    isZenModel: Boolean,
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainer,
@@ -1119,6 +1132,31 @@ private fun Composer(
                             }
                         }
                     }
+                }
+            }
+
+            // Usage line: credits spent on Zen, tokens either way.
+            if (sessionSpend.requests > 0) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(end = 4.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Text(
+                        text = if (isZenModel) {
+                            String.format(
+                                Locale.US,
+                                "%,d tokens · $%.4f",
+                                sessionSpend.tokens,
+                                sessionSpend.costUsd,
+                            )
+                        } else {
+                            String.format(Locale.US, "%,d tokens this session", sessionSpend.tokens)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
                 }
             }
 

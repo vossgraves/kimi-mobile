@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.kimimobile.data.ApiMessage
 import com.kimimobile.data.AppSettings
 import com.kimimobile.data.ChatApi
+import com.kimimobile.data.KimiModel
+import com.kimimobile.data.ModelCatalog
 import com.kimimobile.data.Models
 import com.kimimobile.data.SettingsStore
 import com.kimimobile.data.CatalogType
@@ -48,6 +50,13 @@ data class ChatMessage(
     val agentHandle: String? = null,
 )
 
+/** Accumulated usage for this session, from the cost/usage each reply carries. */
+data class SessionSpend(
+    val tokens: Long = 0,
+    val costUsd: Double = 0.0,
+    val requests: Int = 0,
+)
+
 /** Live context-window usage, estimated locally (the web API reports no usage). */
 data class ContextState(
     val tokens: Long = 0,
@@ -88,6 +97,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val tasks: StateFlow<List<AgentTask>> = _tasks.asStateFlow()
 
     /** Images staged in the composer, as base64 data URLs. */
+    /** Running spend for this session, shown next to the composer. */
+    private val _sessionSpend = MutableStateFlow(SessionSpend())
+    val sessionSpend: StateFlow<SessionSpend> = _sessionSpend.asStateFlow()
+
+    /** Live model list; falls back to the built-in catalogue offline. */
+    private val _availableModels = MutableStateFlow(Models.all)
+    val availableModels: StateFlow<List<KimiModel>> = _availableModels.asStateFlow()
+
     /** Raised when a message needs Kimi auth that isn't set up yet. */
     private val _signInRequired = MutableStateFlow(false)
     val signInRequired: StateFlow<Boolean> = _signInRequired.asStateFlow()
@@ -96,6 +113,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val pendingImages: StateFlow<List<String>> = _pendingImages.asStateFlow()
 
     private val api = ChatApi()
+
+    init {
+        api.onSpend = { report ->
+            _sessionSpend.update { current ->
+                current.copy(
+                    tokens = current.tokens + report.promptTokens + report.completionTokens,
+                    costUsd = current.costUsd + report.costUsd,
+                    requests = current.requests + 1,
+                )
+            }
+        }
+        // Pull the real model list as soon as settings are available.
+        viewModelScope.launch {
+            settings.collect { cfg ->
+                if (cfg.baseUrl.isNotBlank() && _availableModels.value === Models.all) {
+                    refreshModels(cfg)
+                }
+            }
+        }
+    }
+
+    private suspend fun refreshModels(cfg: AppSettings) {
+        val models = ModelCatalog.load(cfg.baseUrl, cfg.token, cfg.zenApiKey)
+        _availableModels.value = models
+    }
+
+    fun reloadModels() {
+        viewModelScope.launch {
+            val cfg = settings.value
+            _availableModels.value = ModelCatalog.load(cfg.baseUrl, cfg.token, cfg.zenApiKey, force = true)
+        }
+    }
     private val json = Json { ignoreUnknownKeys = true }
 
     companion object {
@@ -129,6 +178,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setMathEnabled(enabled: Boolean) {
         viewModelScope.launch { store.setMathEnabled(enabled) }
+    }
+
+    fun completeOnboarding(defaultToFreeModel: Boolean) {
+        viewModelScope.launch {
+            if (defaultToFreeModel) {
+                // Free Zen model works with no account at all.
+                store.setModel("nemotron-3.5-lightning-free")
+                store.setMaxContextTokens(262_144L)
+            }
+            store.setOnboarded(true)
+        }
     }
 
     fun setUpdateChannel(channel: String) {
@@ -346,7 +406,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     }.toList()
                     if (calls.isEmpty()) break@loop
 
-                    for ((id, args) in calls) {
+                    // Models that ignore PLAN: still get a visible task list,
+                    // built from the tools they actually invoke.
+                    if (_tasks.value.isEmpty()) {
+                        _tasks.value = calls.map { (id, _) ->
+                            AgentTask(SkillEngine.byId(id)?.name ?: id, TaskStatus.PENDING)
+                        }
+                    }
+
+                    for ((index, call) in calls.withIndex()) {
+                        val (id, args) = call
+                        _tasks.update { list ->
+                            list.mapIndexed { i, task ->
+                                when {
+                                    task.text == (SkillEngine.byId(id)?.name ?: id) &&
+                                        task.status == TaskStatus.PENDING ->
+                                        task.copy(status = TaskStatus.ACTIVE)
+                                    else -> task
+                                }
+                            }
+                        }
                         val skill = SkillEngine.byId(id)
                         val result = if (skill != null) {
                             runCatching { skill.run(args) }
@@ -363,6 +442,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                             "\n\n```tool\n$id: ${args.take(80)}\n→ ${result.take(500)}\n```\n"
                                     )
                                 } else it
+                            }
+                        }
+                        _tasks.update { list ->
+                            list.map { task ->
+                                if (task.text == (skill?.name ?: id) && task.status == TaskStatus.ACTIVE) {
+                                    task.copy(status = TaskStatus.DONE)
+                                } else task
                             }
                         }
                         refreshContext()
@@ -607,19 +693,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Summarizes older turns into one notice message, keeping the last pair. */
     fun compactNow() {
+        if (_isCompacting.value) return
         val cfg = settings.value
-        if (_isCompacting.value || cfg.token.isBlank()) return
+        val (baseUrl, token) = endpointFor(cfg.model, cfg)
+        // Zen free models need no token; only Kimi does.
+        if (token.isBlank() && Models.providerOf(cfg.model) == Provider.KIMI) {
+            _error.value = "Sign in before compacting"
+            return
+        }
+
         val history = _messages.value
             .filter { !it.notice && it.content.isNotBlank() }
             .map { ApiMessage(role = it.role.name.lowercase(), content = it.content) }
-        if (history.size < 4) return // nothing worth compacting
+        if (history.size < 4) {
+            _error.value = "Not enough conversation to compact yet"
+            return
+        }
 
         _isCompacting.value = true
         viewModelScope.launch {
             try {
                 val summary = api.complete(
-                    cfg.baseUrl, cfg.token, cfg.model,
-                    history + ApiMessage(
+                    baseUrl = baseUrl,
+                    token = token,
+                    model = Models.resolve(cfg.model),
+                    messages = history + ApiMessage(
                         role = "user",
                         content = "Summarize this conversation for continuity. Keep all decisions, " +
                             "code snippets, user preferences, and open questions. " +
@@ -627,7 +725,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     ),
                     maxTokens = 2048,
                 )
-                if (summary.isBlank()) return@launch
+                if (summary.isBlank()) {
+                    // Don't destroy history when the model returns nothing.
+                    _error.value = "Compaction returned nothing — history left untouched"
+                    return@launch
+                }
                 val keep = _messages.value.takeLast(2)
                 val notice = ChatMessage(
                     role = MessageRole.ASSISTANT,
