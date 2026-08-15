@@ -368,6 +368,9 @@ async function createCompletion(model = MODEL_NAME, messages: any[], refreshToke
 
     // kimi.com has no function calling; tell the model to emit TOOL_CALL lines
     // so the proxy can turn them into real tool_calls on the way back.
+    // NOTE: the literal native <|tool_call...|> markers must NOT appear in the
+    // prompt — kimi.com's tokenizer treats them as real control tokens and the
+    // reply comes back empty. The parser still handles native/hybrid output.
     if (tools && tools.length && !segmentId) {
       const toolList = tools.map((t: any) => {
         const f = t.function || {};
@@ -561,7 +564,8 @@ async function createCompletionStream(model = MODEL_NAME, messages: any[], refre
 
     // Same TOOL_CALL contract as the non-streaming path — kimi.com has no
     // function calling, so the model is told to emit a line the proxy can
-    // convert back into a real tool_calls delta.
+    // convert back into a real tool_calls delta. Native/hybrid markup in the
+    // reply is still parsed; the markers just can't appear in the prompt.
     if (tools && tools.length) {
       const toolList = tools.map((t: any) => {
         const f = t.function || {};
@@ -810,8 +814,28 @@ function extractToolCalls(content: string, tools?: any[]): { clean: string, call
     while ((m = callRe.exec(clean))) {
       const name = m[1].replace(/^functions\./, '').replace(/:\d+$/, '').trim();
       const tool = findTool(name);
-      if (!tool) continue;
-      calls.push({ name, args: coerceToolArgs(m[2].replace(/<\|tool_call_end\|>$/, ''), tool) });
+      const rawArgs = m[2].replace(/<\|tool_call_end\|>$/, '');
+      if (tool) {
+        calls.push({ name, args: coerceToolArgs(rawArgs, tool) });
+        continue;
+      }
+      // Hybrid dialect: the model fused the TOOL_CALL contract into native
+      // markup — <|tool_call_begin|>functions.TOOL_CALL:5 ... {"name":"bash",
+      // "args":{...}}. Unwrap {name, args|arguments|parameters|input} envelopes.
+      try {
+        const env = JSON.parse(rawArgs.trim());
+        const innerName = env?.name ?? env?.tool;
+        const innerArgs = env?.args ?? env?.arguments ?? env?.parameters ?? env?.input;
+        const innerTool = typeof innerName === 'string'
+          ? findTool(innerName.replace(/^functions\./, '').replace(/:\d+$/, '').trim())
+          : undefined;
+        if (innerTool && innerArgs && typeof innerArgs === 'object') {
+          calls.push({
+            name: innerTool.function?.name || innerTool.name,
+            args: JSON.stringify(innerArgs)
+          });
+        }
+      } catch { /* not an envelope — leave as text */ }
     }
     if (calls.length) {
       clean = clean
