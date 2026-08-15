@@ -45,8 +45,15 @@ data class StreamChoice(
 @Serializable
 data class StreamDelta(
     val content: String? = null,
+    // Providers disagree on the field name: Kimi and hy3 send
+    // "reasoning_content", nemotron and others send "reasoning". Reading only
+    // one meant those models streamed nothing visible and looked broken.
     @SerialName("reasoning_content") val reasoningContent: String? = null,
-)
+    val reasoning: String? = null,
+) {
+    /** Whichever spelling this provider used. */
+    val thinking: String? get() = reasoningContent ?: reasoning
+}
 
 @Serializable
 data class ErrorResponse(val error: ApiError? = null, val message: String? = null, val code: Int? = null)
@@ -223,9 +230,33 @@ class ChatApi(
     }
 
     /**
-     * Validates a Kimi refresh token via the proxy's /token/check endpoint —
-     * /models answers even for a dead token, so it can't prove sign-in.
+     * Validates a Kimi refresh token against kimi.com directly.
+     *
+     * The proxy's /token/check needs the proxy to be running, so a perfectly
+     * good token reported "connection failed" on any phone without a local
+     * server. kimi.com's own refresh endpoint answers 200 with a fresh access
+     * token, which proves the token without depending on anything local.
      */
+    suspend fun checkTokenDirect(token: String): Boolean {
+        val request = Request.Builder()
+            .url("https://www.kimi.com/api/auth/token/refresh")
+            .header("Authorization", "Bearer $token")
+            .header(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+            )
+            .get()
+            .build()
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                response.isSuccessful &&
+                    response.body?.string()?.contains("access_token") == true
+            }
+        }.getOrDefault(false)
+    }
+
+    /** Proxy-side check, used only when we know the proxy is up. */
     suspend fun checkToken(baseUrl: String, token: String): Boolean {
         // /token/check sits at the server root, not under /v1.
         val root = baseUrl.trimEnd('/').removeSuffix("/v1")

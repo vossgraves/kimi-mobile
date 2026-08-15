@@ -177,6 +177,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     _discoveringProxy.value = false
                     if (tokenChanged && cfg.token.isNotBlank()) {
                         _isConnected.value = null // let the next probe re-check
+                        // Signing in is pointless if nothing can carry the
+                        // request: without a proxy, keep the user on a free
+                        // Zen model rather than a Kimi model that can't run.
+                        if (found == null && Models.providerOf(cfg.model) == Provider.KIMI) {
+                            _error.value = "Signed in, but no Kimi proxy found — " +
+                                "using a free model for now"
+                            store.setModel("nemotron-3.5-lightning-free")
+                            store.setMaxContextTokens(
+                                Models.contextTokensFor("nemotron-3.5-lightning-free")
+                            )
+                        }
                     }
                 }
             }
@@ -473,7 +484,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 json.decodeFromString<StreamChunk>(chunkJson).choices.firstOrNull()?.delta
             }.getOrNull() ?: return@collect
             val content = delta.content.orEmpty()
-            val reasoning = delta.reasoningContent.orEmpty()
+            val reasoning = delta.thinking.orEmpty()
             if (content.isNotEmpty() || reasoning.isNotEmpty()) {
                 _messages.update { list ->
                     list.map { msg ->
@@ -1061,10 +1072,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 _isConnected.value = true
                 return true
             }
-            val live = api.checkToken(baseUrl, token)
-            _error.value = if (live) null else "Token rejected — sign in again"
-            _isConnected.value = live
-            live
+            // Validate against kimi.com itself. The token is what matters;
+            // the proxy being down shouldn't read as "your login failed".
+            val live = api.checkTokenDirect(token)
+            if (!live) {
+                _error.value = "Token rejected by Kimi — sign in again"
+                _isConnected.value = false
+                return false
+            }
+            // Token is good. Now see whether the proxy can actually carry
+            // requests, and say precisely which half is missing.
+            val proxyUp = runCatching { api.checkToken(baseUrl, token) }.getOrDefault(false)
+            _error.value = if (proxyUp) null else {
+                "Signed in, but no Kimi proxy reachable at $baseUrl — " +
+                    "start it, or use a free OpenCode Zen model"
+            }
+            _isConnected.value = proxyUp
+            proxyUp
         } catch (e: Exception) {
             _error.value = e.message ?: "Connection failed"
             _isConnected.value = false
