@@ -1,7 +1,9 @@
 package com.kimimobile.data
 
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.serialization.SerialName
@@ -91,7 +93,11 @@ data class UsageInfo(
 private data class CompletionChoice(val message: CompletionMessage? = null)
 
 @Serializable
-private data class CompletionMessage(val content: String? = null)
+private data class CompletionMessage(
+    val content: String? = null,
+    val reasoning: String? = null,
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
+)
 
 private val JSON = Json { ignoreUnknownKeys = true }
 
@@ -210,7 +216,7 @@ class ChatApi(
         model: String,
         messages: List<ApiMessage>,
         maxTokens: Int = 4096,
-    ): String {
+    ): String = withContext(Dispatchers.IO) {
         val body = buildBody(model, messages, stream = false, maxTokens = maxTokens)
             .toRequestBody("application/json".toMediaType())
 
@@ -225,7 +231,12 @@ class ChatApi(
             if (!response.isSuccessful) throw IOException(friendlyError(response.code, text))
             val parsed = JSON.decodeFromString<CompletionResponse>(text)
             reportSpend(parsed.usage, parsed.cost)
-            return parsed.choices.firstOrNull()?.message?.content.orEmpty()
+            // Reasoning models sometimes put everything in the reasoning field
+            // and leave content empty; fall back so the turn isn't blank.
+            val message = parsed.choices.firstOrNull()?.message
+            message?.content?.takeIf { it.isNotBlank() }
+                ?: message?.reasoning?.takeIf { it.isNotBlank() }
+                ?: ""
         }
     }
 
@@ -237,7 +248,7 @@ class ChatApi(
      * server. kimi.com's own refresh endpoint answers 200 with a fresh access
      * token, which proves the token without depending on anything local.
      */
-    suspend fun checkTokenDirect(token: String): Boolean {
+    suspend fun checkTokenDirect(token: String): Boolean = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url("https://www.kimi.com/api/auth/token/refresh")
             .header("Authorization", "Bearer $token")
@@ -248,7 +259,7 @@ class ChatApi(
             )
             .get()
             .build()
-        return runCatching {
+        runCatching {
             client.newCall(request).execute().use { response ->
                 response.isSuccessful &&
                     response.body?.string()?.contains("access_token") == true
@@ -257,7 +268,7 @@ class ChatApi(
     }
 
     /** Proxy-side check, used only when we know the proxy is up. */
-    suspend fun checkToken(baseUrl: String, token: String): Boolean {
+    suspend fun checkToken(baseUrl: String, token: String): Boolean = withContext(Dispatchers.IO) {
         // /token/check sits at the server root, not under /v1.
         val root = baseUrl.trimEnd('/').removeSuffix("/v1")
         val payload = buildJsonObject { put("token", token) }.toString()
@@ -268,23 +279,24 @@ class ChatApi(
         client.newCall(request).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) throw IOException(friendlyError(response.code, text))
-            return text.contains("\"live\":true")
+            text.contains("\"live\":true")
         }
     }
 
     /** Quick connectivity check: list available models. Returns the model ids. */
-    suspend fun listModels(baseUrl: String, token: String): List<String> {
-        val request = Request.Builder()
-            .url("${baseUrl.trimEnd('/')}/models")
-            .header("Authorization", "Bearer $token")
-            .get()
-            .build()
-        client.newCall(request).execute().use { response ->
-            val text = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw IOException(friendlyError(response.code, text))
-            return JSON.decodeFromString<ModelListResponse>(text).data.map { it.id }
+    suspend fun listModels(baseUrl: String, token: String): List<String> =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("${baseUrl.trimEnd('/')}/models")
+                .header("Authorization", "Bearer $token")
+                .get()
+                .build()
+            client.newCall(request).execute().use { response ->
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) throw IOException(friendlyError(response.code, text))
+                JSON.decodeFromString<ModelListResponse>(text).data.map { it.id }
+            }
         }
-    }
 
     private fun reportSpend(usage: UsageInfo?, cost: String?) {
         val callback = onSpend ?: return
