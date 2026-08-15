@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.kimi3.client"
+    namespace = "com.kimimobile"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.kimi3.client"
+        applicationId = "com.kimimobile"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -59,6 +59,8 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.exifinterface)
+    implementation(libs.coil.compose)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)

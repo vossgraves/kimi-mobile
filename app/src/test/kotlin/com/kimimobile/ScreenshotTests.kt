@@ -1,4 +1,4 @@
-package com.kimi3.client
+package com.kimimobile
 
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -11,15 +11,14 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.kimi3.client.data.CatalogType
-import com.kimi3.client.data.Marketplace
-import com.kimi3.client.data.SkillEngine
-import com.kimi3.client.ui.ChatMessage
-import com.kimi3.client.ui.ContextState
-import com.kimi3.client.ui.MessageRole
-import com.kimi3.client.ui.screens.ChatScreenContent
-import com.kimi3.client.ui.screens.MarketplaceScreenContent
-import com.kimi3.client.ui.theme.KimiTheme
+import com.kimimobile.data.CatalogType
+import com.kimimobile.data.Marketplace
+import com.kimimobile.ui.ChatMessage
+import com.kimimobile.ui.ContextState
+import com.kimimobile.ui.MessageRole
+import com.kimimobile.ui.screens.ChatScreenContent
+import com.kimimobile.ui.screens.MarketplaceScreenContent
+import com.kimimobile.ui.theme.KimiTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -59,7 +58,9 @@ class ScreenshotTests {
         name: String,
         contextState: ContextState = ContextState(),
         agentEnabled: Boolean = false,
-        installedSkills: Set<String> = emptySet(),
+        modelName: String = "K2 · 0905",
+        searchEnabled: Boolean = false,
+        supportsVision: Boolean = false,
     ) {
         composeRule.setContent {
             KimiTheme(darkTheme = dark, dynamicColor = false) {
@@ -74,8 +75,9 @@ class ScreenshotTests {
                     onOpenSettings = {},
                     contextState = contextState,
                     agentEnabled = agentEnabled,
-                    installedSkills = installedSkills,
-                    onOpenMarketplace = {},
+                    modelName = modelName,
+                    searchEnabled = searchEnabled,
+                    supportsVision = supportsVision,
                 )
             }
         }
@@ -170,7 +172,7 @@ class ScreenshotTests {
         ),
         isStreaming = true,
         agentEnabled = true,
-        installedSkills = SkillEngine.all.map { it.id }.toSet(),
+        searchEnabled = true,
         name = "chat_agent_mode",
     )
 

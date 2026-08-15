@@ -1,4 +1,4 @@
-package com.kimi3.client
+package com.kimimobile
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -10,12 +10,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.kimi3.client.ui.ChatViewModel
-import com.kimi3.client.ui.screens.ChatScreen
-import com.kimi3.client.ui.screens.LoginScreen
-import com.kimi3.client.ui.screens.MarketplaceScreen
-import com.kimi3.client.ui.screens.SettingsScreen
-import com.kimi3.client.ui.theme.KimiTheme
+import com.kimimobile.ui.ChatViewModel
+import com.kimimobile.ui.screens.ChatScreen
+import com.kimimobile.ui.screens.LoginScreen
+import com.kimimobile.ui.screens.MarketplaceScreen
+import com.kimimobile.ui.screens.SettingsScreen
+import com.kimimobile.ui.theme.KimiTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

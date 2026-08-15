@@ -1,5 +1,8 @@
-package com.kimi3.client.data
+package com.kimimobile.data
 
+import java.time.LocalDate
+import java.time.LocalTime
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -8,9 +11,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.time.LocalDate
-import java.time.LocalTime
-import java.util.concurrent.TimeUnit
 
 /**
  * Tool library for agent mode. The kimi.com web API has no native function
@@ -153,7 +153,7 @@ object SkillEngine {
     private fun fetch(url: String): String? = runCatching {
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) KimiK3Client/1.0")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) KimiMobile/1.0")
             .get()
             .build()
         client.newCall(request).execute().use { it.body?.string() }

@@ -1,4 +1,4 @@
-package com.kimi3.client.ui.screens
+package com.kimimobile.ui.screens
 
 import android.annotation.SuppressLint
 import android.os.Handler
@@ -7,7 +7,6 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -32,7 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.kimi3.client.data.SettingsStore
+import com.kimimobile.data.SettingsStore
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 

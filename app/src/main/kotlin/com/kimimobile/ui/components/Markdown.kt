@@ -1,4 +1,4 @@
-package com.kimi3.client.ui.components
+package com.kimimobile.ui.components
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -12,9 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopyimport androidx.compose.material3.Icon
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface

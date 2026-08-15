@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "KimiK3Client"
+rootProject.name = "KimiMobile"
 include(":app")

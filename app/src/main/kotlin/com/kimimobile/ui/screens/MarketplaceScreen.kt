@@ -1,4 +1,4 @@
-package com.kimi3.client.ui.screens
+package com.kimimobile.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -43,10 +43,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.kimi3.client.data.CatalogItem
-import com.kimi3.client.data.CatalogType
-import com.kimi3.client.data.Marketplace
-import com.kimi3.client.ui.ChatViewModel
+import com.kimimobile.data.CatalogItem
+import com.kimimobile.data.CatalogType
+import com.kimimobile.data.Marketplace
+import com.kimimobile.ui.ChatViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

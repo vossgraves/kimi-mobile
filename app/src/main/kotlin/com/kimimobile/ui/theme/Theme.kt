@@ -1,4 +1,4 @@
-package com.kimi3.client.ui.theme
+package com.kimimobile.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme

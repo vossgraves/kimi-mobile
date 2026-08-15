@@ -1,4 +1,4 @@
-package com.kimi3.client.data
+package com.kimimobile.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -16,12 +16,14 @@ private val Context.dataStore by preferencesDataStore(name = "kimi_settings")
 data class AppSettings(
     val baseUrl: String = "http://10.0.2.2:8000/v1",
     val token: String = "",
-    val model: String = "kimi-k3",
-    // Context window management. kimi-k3 advertises 1M tokens; the web API
-    // doesn't report usage, so we estimate from characters and compare
-    // against this max (which the user can lower to match real free-tier
-    // limits, e.g. 128k).
-    val maxContextTokens: Long = 1_048_576L,
+    val model: String = "kimi-k2-0905-preview",
+    val searchEnabled: Boolean = false,
+    val researchEnabled: Boolean = false,
+    val mathEnabled: Boolean = false,
+    // Context window management. Set from the selected model (K2 = 256k,
+    // Moonshot 8k/32k/128k); the web API reports no usage, so we estimate
+    // from characters and compare against this max.
+    val maxContextTokens: Long = 262_144L,
     val autoCompact: Boolean = true,
     val compactThresholdPct: Int = 80,
     val agentEnabled: Boolean = false,
@@ -36,6 +38,9 @@ class SettingsStore(private val context: Context) {
         val BASE_URL = stringPreferencesKey("base_url")
         val TOKEN = stringPreferencesKey("token")
         val MODEL = stringPreferencesKey("model")
+        val SEARCH = booleanPreferencesKey("search_enabled")
+        val RESEARCH = booleanPreferencesKey("research_enabled")
+        val MATH = booleanPreferencesKey("math_enabled")
         val MAX_CONTEXT_TOKENS = longPreferencesKey("max_context_tokens")
         val AUTO_COMPACT = booleanPreferencesKey("auto_compact")
         val COMPACT_THRESHOLD = intPreferencesKey("compact_threshold")
@@ -48,6 +53,9 @@ class SettingsStore(private val context: Context) {
             baseUrl = prefs[Keys.BASE_URL] ?: AppSettings().baseUrl,
             token = prefs[Keys.TOKEN] ?: "",
             model = prefs[Keys.MODEL] ?: AppSettings().model,
+            searchEnabled = prefs[Keys.SEARCH] ?: false,
+            researchEnabled = prefs[Keys.RESEARCH] ?: false,
+            mathEnabled = prefs[Keys.MATH] ?: false,
             maxContextTokens = prefs[Keys.MAX_CONTEXT_TOKENS] ?: AppSettings().maxContextTokens,
             autoCompact = prefs[Keys.AUTO_COMPACT] ?: AppSettings().autoCompact,
             compactThresholdPct = prefs[Keys.COMPACT_THRESHOLD] ?: AppSettings().compactThresholdPct,
@@ -75,6 +83,22 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs.remove(Keys.TOKEN)
         }
+    }
+
+    suspend fun setModel(id: String) {
+        context.dataStore.edit { prefs -> prefs[Keys.MODEL] = id }
+    }
+
+    suspend fun setSearchEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[Keys.SEARCH] = enabled }
+    }
+
+    suspend fun setResearchEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[Keys.RESEARCH] = enabled }
+    }
+
+    suspend fun setMathEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[Keys.MATH] = enabled }
     }
 
     suspend fun setMaxContextTokens(max: Long) {

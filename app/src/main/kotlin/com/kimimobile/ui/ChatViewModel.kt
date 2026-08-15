@@ -1,14 +1,15 @@
-package com.kimi3.client.ui
+package com.kimimobile.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.kimi3.client.data.ApiMessage
-import com.kimi3.client.data.AppSettings
-import com.kimi3.client.data.ChatApi
-import com.kimi3.client.data.SettingsStore
-import com.kimi3.client.data.SkillEngine
-import com.kimi3.client.data.StreamChunk
+import com.kimimobile.data.ApiMessage
+import com.kimimobile.data.AppSettings
+import com.kimimobile.data.ChatApi
+import com.kimimobile.data.Models
+import com.kimimobile.data.SettingsStore
+import com.kimimobile.data.SkillEngine
+import com.kimimobile.data.StreamChunk
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -29,12 +30,16 @@ data class ChatMessage(
     val failed: Boolean = false,
     val streaming: Boolean = false,
     val notice: Boolean = false,
+    /** Base64 data URLs attached by the user. */
+    val images: List<String> = emptyList(),
+    /** Reasoning trace from thinking models, shown in a collapsible block. */
+    val reasoning: String = "",
 )
 
 /** Live context-window usage, estimated locally (the web API reports no usage). */
 data class ContextState(
     val tokens: Long = 0,
-    val maxTokens: Long = 1_048_576L,
+    val maxTokens: Long = 262_144L,
     val pct: Double = 0.0,
     val messageCount: Int = 0,
 )
@@ -66,6 +71,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val _contextState = MutableStateFlow(ContextState())
     val contextState: StateFlow<ContextState> = _contextState.asStateFlow()
 
+    /** Images staged in the composer, as base64 data URLs. */
+    private val _pendingImages = MutableStateFlow<List<String>>(emptyList())
+    val pendingImages: StateFlow<List<String>> = _pendingImages.asStateFlow()
+
     private val api = ChatApi()
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -79,6 +88,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Settings passthroughs --------------------------------------------
+
+    fun setModel(id: String) {
+        viewModelScope.launch {
+            store.setModel(id)
+            // Keep the context ring honest about the new model's window.
+            store.setMaxContextTokens(Models.contextTokensFor(id))
+        }
+    }
+
+    fun setSearchEnabled(enabled: Boolean) {
+        viewModelScope.launch { store.setSearchEnabled(enabled) }
+    }
+
+    fun setResearchEnabled(enabled: Boolean) {
+        viewModelScope.launch { store.setResearchEnabled(enabled) }
+    }
+
+    fun setMathEnabled(enabled: Boolean) {
+        viewModelScope.launch { store.setMathEnabled(enabled) }
+    }
 
     fun setMaxContextTokens(max: Long) {
         viewModelScope.launch { store.setMaxContextTokens(max.coerceAtLeast(1000L)) }
@@ -102,46 +131,79 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { store.setInstalledSkills(next) }
     }
 
+    // ---- Attachments ---------------------------------------------------------
+
+    fun attachImage(dataUrl: String) {
+        _pendingImages.update { (it + dataUrl).takeLast(4) }
+    }
+
+    fun removeImage(dataUrl: String) {
+        _pendingImages.update { it - dataUrl }
+    }
+
+    fun clearImages() {
+        _pendingImages.value = emptyList()
+    }
+
     // ---- Chat ----------------------------------------------------------------
+
+    /** The model id actually sent, including capability suffixes. */
+    private fun resolvedModel(cfg: AppSettings): String = Models.resolve(
+        baseId = cfg.model,
+        search = cfg.searchEnabled,
+        research = cfg.researchEnabled,
+        math = cfg.mathEnabled,
+    )
 
     fun send(text: String) {
         val cfg = settings.value
-        if (text.isBlank() || _isStreaming.value) return
+        val images = _pendingImages.value
+        if ((text.isBlank() && images.isEmpty()) || _isStreaming.value) return
         if (cfg.token.isBlank()) {
-            _error.value = "Set your refresh token in Settings first"
+            _error.value = "Sign in or paste your refresh token in Settings first"
             return
         }
         if (cfg.agentEnabled) {
             sendAgent(text, cfg)
         } else {
-            sendChat(text, cfg)
+            sendChat(text, cfg, images)
         }
+        clearImages()
     }
 
-    private fun sendChat(text: String, cfg: AppSettings) {
-        val userMsg = ChatMessage(role = MessageRole.USER, content = text.trim())
+    private fun sendChat(text: String, cfg: AppSettings, images: List<String>) {
+        val userMsg = ChatMessage(
+            role = MessageRole.USER,
+            content = text.trim(),
+            images = images,
+        )
         val placeholder = ChatMessage(role = MessageRole.ASSISTANT, content = "", streaming = true)
         _messages.update { it + userMsg + placeholder }
         refreshContext()
 
         val history = _messages.value
-            .filter { it.id != placeholder.id }
-            .map { ApiMessage(role = it.role.name.lowercase(), content = it.content) }
+            .filter { it.id != placeholder.id && !it.failed }
+            .map { ApiMessage(role = it.role.name.lowercase(), content = it.content, images = it.images) }
 
         _isStreaming.value = true
         _isConnected.value = null
         viewModelScope.launch {
             try {
-                api.streamChat(cfg.baseUrl, cfg.token, cfg.model, history).collect { chunkJson ->
-                    val content = runCatching {
-                        json.decodeFromString<StreamChunk>(chunkJson)
-                            .choices.firstOrNull()?.delta?.content.orEmpty()
-                    }.getOrDefault("")
-                    if (content.isNotEmpty()) {
+                api.streamChat(cfg.baseUrl, cfg.token, resolvedModel(cfg), history).collect { chunkJson ->
+                    val delta = runCatching {
+                        json.decodeFromString<StreamChunk>(chunkJson).choices.firstOrNull()?.delta
+                    }.getOrNull() ?: return@collect
+                    val content = delta.content.orEmpty()
+                    val reasoning = delta.reasoningContent.orEmpty()
+                    if (content.isNotEmpty() || reasoning.isNotEmpty()) {
                         _messages.update { list ->
                             list.map { msg ->
-                                if (msg.id == placeholder.id) msg.copy(content = msg.content + content)
-                                else msg
+                                if (msg.id == placeholder.id) {
+                                    msg.copy(
+                                        content = msg.content + content,
+                                        reasoning = msg.reasoning + reasoning,
+                                    )
+                                } else msg
                             }
                         }
                     }
@@ -169,6 +231,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _isConnected.value = null
         viewModelScope.launch {
             try {
+                val model = resolvedModel(cfg)
                 val history = mutableListOf<ApiMessage>()
                 history += ApiMessage("system", agentSystemPrompt(cfg.installedSkills))
                 history += _messages.value
@@ -176,7 +239,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     .map { ApiMessage(role = it.role.name.lowercase(), content = it.content) }
 
                 loop@ for (step in 1..MAX_AGENT_STEPS) {
-                    val resp = api.complete(cfg.baseUrl, cfg.token, cfg.model, history)
+                    val resp = api.complete(cfg.baseUrl, cfg.token, model, history)
                     if (resp.isBlank()) break@loop
                     _messages.update { list ->
                         list.map { if (it.id == placeholder.id) it.copy(content = it.content + resp) else it }
@@ -200,8 +263,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         _messages.update { list ->
                             list.map {
                                 if (it.id == placeholder.id) {
-                                    it.copy(content = it.content +
-                                        "\n\n```\nTOOL_CALL $id: ${args.take(80)}\n→ $result\n```")
+                                    it.copy(
+                                        content = it.content +
+                                            "\n\n```tool\n$id: ${args.take(80)}\n→ ${result.take(500)}\n```\n"
+                                    )
                                 } else it
                             }
                         }
@@ -241,11 +306,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun refreshContext() {
         val cfg = settings.value
         val texts = _messages.value.filter { it.content.isNotBlank() }.map { it.content }
-        val tokens = estimateTokens(texts) + 4000L // system prompt + protocol overhead
+        // Images cost roughly a thousand tokens each once tiled.
+        val imageTokens = _messages.value.sumOf { it.images.size } * 1024L
+        val tokens = estimateTokens(texts) + imageTokens + 1000L
+        val max = cfg.maxContextTokens.coerceAtLeast(1000L)
         _contextState.value = ContextState(
             tokens = tokens,
-            maxTokens = cfg.maxContextTokens,
-            pct = tokens.toDouble() / cfg.maxContextTokens.coerceAtLeast(1000L),
+            maxTokens = max,
+            pct = tokens.toDouble() / max,
             messageCount = texts.size,
         )
     }
@@ -287,7 +355,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     content = summary,
                     notice = true,
                 )
-                _messages.value = keep + notice
+                _messages.value = listOf(notice) + keep
                 refreshContext()
             } catch (e: Exception) {
                 _error.value = "Compaction failed: ${e.message}"
@@ -313,6 +381,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun failPlaceholder(placeholder: ChatMessage, e: Exception) {
         finalizeAssistant(placeholder, e.message ?: "Request failed")
+    }
+
+    /** Retries the last user turn after a failure. */
+    fun retryLast() {
+        val lastUser = _messages.value.lastOrNull { it.role == MessageRole.USER } ?: return
+        _messages.update { list ->
+            val idx = list.indexOfLast { it.role == MessageRole.USER }
+            if (idx < 0) list else list.take(idx)
+        }
+        _pendingImages.value = lastUser.images
+        send(lastUser.content)
     }
 
     /** Non-network warm check: pings the API only if we haven't connected yet. */
@@ -347,6 +426,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun clear() {
         _messages.value = emptyList()
         _error.value = null
+        clearImages()
         refreshContext()
     }
 

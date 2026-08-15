@@ -1,4 +1,4 @@
-package com.kimi3.client.data
+package com.kimimobile.data
 
 /**
  * Curated catalog of agent skills and connectors. Skills are executable
