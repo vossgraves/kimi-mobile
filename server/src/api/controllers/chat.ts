@@ -392,8 +392,25 @@ async function createCompletion(model = MODEL_NAME, messages: any[], refreshToke
     }
     getSuggestion(sendMessages[0].content, refreshToken)
       .catch(err => logger.warn('getSuggestion请求失败，继续主要流程:', err.message));
-    tokenSize(sendMessages[0].content, refs, refreshToken, convId)
-      .catch(err => logger.warn('tokenSize请求失败，继续主要流程:', err.message));
+
+    // Real prompt size: feeds usage back to the client and rejects oversized
+    // input with a 400 BEFORE burning a completion, so agent clients
+    // (opencode) can trigger context-overflow compaction instead of receiving
+    // a masked mid-stream failure.
+    let promptTokens = 0;
+    if (!segmentId) {
+      try {
+        const sizeInfo = await tokenSize(sendMessages[0].content, refs, refreshToken, convId);
+        promptTokens = Number(sizeInfo?.total_token_size) || 0;
+        if (sizeInfo && (Number(sizeInfo.over_size) > 0 || Number(sizeInfo.new_chat_over_size) > 0))
+          throw new APIException(EX.API_REQUEST_FAILED,
+            `prompt is too long: ${promptTokens} tokens exceeds the maximum context size`)
+            .setHTTPStatusCode(400);
+      } catch (err) {
+        if (err instanceof APIException && err.httpStatusCode === 400) throw err;
+        logger.warn('tokenSize请求失败，继续主要流程:', err.message);
+      }
+    }
 
     const isMath = model.indexOf('math') != -1;
     const isSearchModel = model.indexOf('search') != -1;
@@ -447,30 +464,32 @@ async function createCompletion(model = MODEL_NAME, messages: any[], refreshToke
     // 接收流为输出文本
     const answer = await receiveStream(model, convId, stream);
 
-    // Turn the model's TOOL_CALL text into a real OpenAI tool_calls block, so
-    // opencode's agent loop (which only reads structured tool_calls) fires.
+    // Turn the model's tool-call text (native markup or TOOL_CALL: line) into
+    // real OpenAI tool_calls so opencode's agent loop fires.
     if (tools && tools.length) {
       const content: string = answer.choices[0]?.message?.content || '';
-      const match = content.match(/TOOL_CALL:([\w.-]+)\|([^\n]*)/);
-      if (match) {
-        const name = match[1].trim();
-        const toolDef = tools.find((t: any) => (t.function?.name || t.name) === name);
-        const args = coerceToolArgs(match[2], toolDef);
-        if (toolDef) {
-          const callId = 'call_' + util.uuid().replace(/-/g, '').slice(0, 24);
-          answer.choices[0].message = {
-            role: 'assistant',
-            content: null,
-            tool_calls: [{
-              id: callId,
-              type: 'function',
-              function: { name, arguments: args }
-            }]
-          };
-          answer.choices[0].finish_reason = 'tool_calls';
-        }
+      const { clean, calls } = extractToolCalls(content, tools);
+      if (calls.length) {
+        answer.choices[0].message = {
+          role: 'assistant',
+          content: clean || null,
+          tool_calls: calls.map((c, i) => ({
+            id: 'call_' + util.uuid().replace(/-/g, '').slice(0, 24),
+            type: 'function',
+            function: { name: c.name, arguments: c.args }
+          }))
+        };
+        answer.choices[0].finish_reason = 'tool_calls';
       }
     }
+
+    // Real token usage (was hardcoded 1/1/2, which broke client context meters)
+    const outEstimate = Math.ceil((answer.choices[0]?.message?.content?.length || 0) / 4) || 1;
+    answer.usage = {
+      prompt_tokens: promptTokens || 1,
+      completion_tokens: outEstimate,
+      total_tokens: (promptTokens || 1) + outEstimate
+    };
 
     // 如果上次请求生成长度超限，则继续请求
     if (answer.choices[0].finish_reason == 'length' && answer.segment_id) {
@@ -488,6 +507,9 @@ async function createCompletion(model = MODEL_NAME, messages: any[], refreshToke
     return answer;
   })()
     .catch(err => {
+      // Client-facing 4xx (e.g. prompt too long) must not be retried
+      if (err instanceof APIException && err.httpStatusCode >= 400 && err.httpStatusCode < 500)
+        throw err;
       if (retryCount < MAX_RETRY_COUNT) {
         logger.error(`Stream response error: ${err.message}`);
         logger.warn(`Try again after ${RETRY_DELAY / 1000}s...`);
@@ -561,8 +583,20 @@ async function createCompletionStream(model = MODEL_NAME, messages: any[], refre
       .catch(err => logger.warn('preN2s请求失败，继续主要流程:', err.message));
     getSuggestion(sendMessages[0].content, refreshToken)
       .catch(err => logger.warn('getSuggestion请求失败，继续主要流程:', err.message));
-    tokenSize(sendMessages[0].content, refs, refreshToken, convId)
-      .catch(err => logger.warn('tokenSize请求失败，继续主要流程:', err.message));
+
+    // Real prompt size — see createCompletion for why this blocks oversized input
+    let promptTokens = 0;
+    try {
+      const sizeInfo = await tokenSize(sendMessages[0].content, refs, refreshToken, convId);
+      promptTokens = Number(sizeInfo?.total_token_size) || 0;
+      if (sizeInfo && (Number(sizeInfo.over_size) > 0 || Number(sizeInfo.new_chat_over_size) > 0))
+        throw new APIException(EX.API_REQUEST_FAILED,
+          `prompt is too long: ${promptTokens} tokens exceeds the maximum context size`)
+          .setHTTPStatusCode(400);
+    } catch (err) {
+      if (err instanceof APIException && err.httpStatusCode === 400) throw err;
+      logger.warn('tokenSize请求失败，继续主要流程:', err.message);
+    }
 
     const isMath = model.indexOf('math') != -1;
     const isSearchModel = model.indexOf('search') != -1;
@@ -610,9 +644,12 @@ async function createCompletionStream(model = MODEL_NAME, messages: any[], refre
       // 如果引用会话将不会清除，因为我们不知道什么时候你会结束会话
       !refConvId && removeConversation(convId, refreshToken)
         .catch(err => console.error(err));
-    }, tools);
+    }, tools, promptTokens);
   })()
     .catch(err => {
+      // Client-facing 4xx (e.g. prompt is too long) must not be retried
+      if (err instanceof APIException && err.httpStatusCode >= 400 && err.httpStatusCode < 500)
+        throw err;
       if (retryCount < MAX_RETRY_COUNT) {
         logger.error(`Stream response error: ${err.message}`);
         logger.warn(`Try again after ${RETRY_DELAY / 1000}s...`);
@@ -748,6 +785,52 @@ function coerceToolArgs(raw: string, tool?: any): string {
   const props = tool?.function?.parameters?.properties;
   const firstParam = props ? Object.keys(props)[0] : undefined;
   return JSON.stringify({ [firstParam || 'input']: text });
+}
+
+/**
+ * Extracts tool calls from the model's text, whatever dialect it used.
+ *
+ * kimi.com has no function-calling channel, so the model is told to emit a
+ * TOOL_CALL: line — but K2/K3 are natively trained on
+ * <|tool_calls_section_begin|>…<|tool_call_begin|>functions.name:0
+ * <|tool_call_argument_begin|>{json}<|tool_call_end|>… and fall back to it
+ * under load. Both are parsed here; only names declared in `tools` convert,
+ * anything else stays as plain text.
+ */
+function extractToolCalls(content: string, tools?: any[]): { clean: string, calls: { name: string, args: string }[] } {
+  const calls: { name: string, args: string }[] = [];
+  let clean = content || '';
+  if (!tools || !tools.length || !clean) return { clean, calls };
+  const findTool = (name: string) => tools.find((t: any) => (t.function?.name || t.name) === name);
+
+  // 1) Kimi-native markup (end markers optional — the stream can truncate)
+  if (clean.includes('<|tool_call')) {
+    const callRe = /<\|tool_call_begin\|>\s*([\w.-]+(?::\d+)?)\s*<\|tool_call_argument_begin\|>([\s\S]*?)(?=<\|tool_call_end\|>|<\|tool_call_begin\|>|<\|tool_calls_section_end\|>|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = callRe.exec(clean))) {
+      const name = m[1].replace(/^functions\./, '').replace(/:\d+$/, '').trim();
+      const tool = findTool(name);
+      if (!tool) continue;
+      calls.push({ name, args: coerceToolArgs(m[2].replace(/<\|tool_call_end\|>$/, ''), tool) });
+    }
+    if (calls.length) {
+      clean = clean
+        .replace(/<\|tool_calls_section_begin\|>[\s\S]*?(<\|tool_calls_section_end\|>|$)/g, '')
+        .replace(/<\|\/?tool[_a-z]*\|>/g, '')
+        .trim();
+    }
+  }
+
+  // 2) Legacy TOOL_CALL:<name>|<json> line
+  if (!calls.length) {
+    const m = clean.match(/TOOL_CALL:([\w.-]+)\|([^\n]*)/);
+    const tool = m && findTool(m[1].trim());
+    if (m && tool) {
+      calls.push({ name: m[1].trim(), args: coerceToolArgs(m[2], tool) });
+      clean = clean.replace(m[0], '').trim();
+    }
+  }
+  return { clean, calls };
 }
 
 /**
@@ -1109,7 +1192,7 @@ async function receiveStream(model: string, convId: string, stream: any): Promis
  * @param stream 消息流
  * @param endCallback 传输结束回调
  */
-function createTransStream(model: string, convId: string, stream: any, endCallback?: Function, tools?: any[]) {
+function createTransStream(model: string, convId: string, stream: any, endCallback?: Function, tools?: any[], promptTokens = 0) {
   // 消息创建时间
   const created = util.unixTimestamp();
   // 创建转换流
@@ -1133,6 +1216,12 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
   // detected once the full text exists. Without tools we stream as before.
   const bufferForTools = !!(tools && tools.length);
   let buffered = '';
+  // completion_tokens estimate for the final chunk's usage (was hardcoded 1/1/2)
+  let outputChars = 0;
+  const usage = () => {
+    const completion = Math.ceil(outputChars / 4) || 1;
+    return { prompt_tokens: promptTokens || 1, completion_tokens: completion, total_tokens: (promptTokens || 1) + completion };
+  };
   const parser = createParser(event => {
     try {
       if (event.type !== "event") return;
@@ -1144,6 +1233,7 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
       if (result.event == 'cmpl') {
         const exceptCharIndex = result.text.indexOf("�");
         const chunk = result.text.substring(0, exceptCharIndex == -1 ? result.text.length : exceptCharIndex);
+        outputChars += chunk.length;
         if (bufferForTools) {
           buffered += (searchFlag ? '\n' : '') + chunk;
           if (searchFlag) searchFlag = false;
@@ -1173,16 +1263,22 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
       }
       // 处理结束或错误
       else if (result.event == 'all_done' || result.event == 'error') {
-        // Buffered mode: decide between a structured tool call and plain text.
+        // Buffered mode: decide between structured tool calls and plain text.
         if (bufferForTools) {
-          const match = buffered.match(/TOOL_CALL:([\w.-]+)\|([^\n]*)/);
-          const named = match ? (tools as any[]).find(
-            (t: any) => (t.function?.name || t.name) === match[1].trim()
-          ) : undefined;
+          const { clean, calls } = extractToolCalls(buffered, tools);
 
-          if (match && named) {
-            const args = coerceToolArgs(match[2], named);
-            const callId = 'call_' + util.uuid().replace(/-/g, '').slice(0, 24);
+          if (calls.length) {
+            // Any text the model wrote before calling tools goes out first.
+            if (clean) {
+              !transStream.closed && transStream.write(`data: ${JSON.stringify({
+                id: convId,
+                model,
+                object: 'chat.completion.chunk',
+                choices: [{ index: 0, delta: { content: clean }, finish_reason: null }],
+                segment_id: segmentId,
+                created
+              })}\n\n`);
+            }
             // opencode reads choices[0].delta.tool_calls — give it exactly that.
             !transStream.closed && transStream.write(`data: ${JSON.stringify({
               id: convId,
@@ -1192,13 +1288,12 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
                 index: 0,
                 delta: {
                   role: 'assistant',
-                  content: null,
-                  tool_calls: [{
-                    index: 0,
-                    id: callId,
+                  tool_calls: calls.map((c, i) => ({
+                    index: i,
+                    id: 'call_' + util.uuid().replace(/-/g, '').slice(0, 24),
                     type: 'function',
-                    function: { name: match[1].trim(), arguments: args }
-                  }]
+                    function: { name: c.name, arguments: c.args }
+                  }))
                 },
                 finish_reason: null
               }],
@@ -1210,7 +1305,7 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
               model,
               object: 'chat.completion.chunk',
               choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-              usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              usage: usage(),
               segment_id: segmentId,
               created
             })}\n\n`);
@@ -1220,7 +1315,7 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
           }
 
           // No tool call — replay the text we held back.
-          const text = buffered + (result.event == 'error'
+          const text = clean + (result.event == 'error'
             ? '\n[内容由于不合规被停止生成，我们换个话题吧]' : '');
           if (text) {
             !transStream.closed && transStream.write(`data: ${JSON.stringify({
@@ -1237,7 +1332,7 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
             model,
             object: 'chat.completion.chunk',
             choices: [{ index: 0, delta: {}, finish_reason: lengthExceed ? 'length' : 'stop' }],
-            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+            usage: usage(),
             segment_id: segmentId,
             created
           })}\n\n`);
@@ -1257,7 +1352,7 @@ function createTransStream(model: string, convId: string, stream: any, endCallba
               } : {}, finish_reason: lengthExceed ? 'length' : 'stop'
             }
           ],
-          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          usage: usage(),
           segment_id: segmentId,
           created
         })}\n\n`;
