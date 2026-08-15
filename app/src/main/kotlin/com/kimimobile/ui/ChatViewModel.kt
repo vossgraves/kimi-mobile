@@ -8,7 +8,12 @@ import com.kimimobile.data.AppSettings
 import com.kimimobile.data.ChatApi
 import com.kimimobile.data.Models
 import com.kimimobile.data.SettingsStore
+import com.kimimobile.data.CatalogType
+import com.kimimobile.data.Marketplace
+import com.kimimobile.data.Provider
 import com.kimimobile.data.SkillEngine
+import com.kimimobile.data.Subagent
+import com.kimimobile.data.Subagents
 import com.kimimobile.data.StreamChunk
 import com.kimimobile.ui.components.AgentTask
 import com.kimimobile.ui.components.TaskStatus
@@ -18,6 +23,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.util.UUID
@@ -36,6 +44,8 @@ data class ChatMessage(
     val images: List<String> = emptyList(),
     /** Reasoning trace from thinking models, shown in a collapsible block. */
     val reasoning: String = "",
+    /** Set when a subagent produced this message. */
+    val agentHandle: String? = null,
 )
 
 /** Live context-window usage, estimated locally (the web API reports no usage). */
@@ -175,10 +185,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             _error.value = "Sign in or paste your refresh token in Settings first"
             return
         }
-        if (cfg.agentEnabled) {
-            sendAgent(text, cfg)
-        } else {
-            sendChat(text, cfg, images)
+        // "add web search", "turn off memory" — manage tools by asking.
+        Marketplace.parseInstallIntent(text)?.let { intent ->
+            applyInstallIntent(intent)
+            return
+        }
+
+        val mention = Subagents.parseMention(text)
+        when {
+            mention != null -> sendToSubagent(mention.first, mention.second, cfg)
+            cfg.agentEnabled -> sendAgent(text, cfg)
+            else -> sendChat(text, cfg, images)
         }
         clearImages()
     }
@@ -201,7 +218,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _isConnected.value = null
         viewModelScope.launch {
             try {
-                api.streamChat(cfg.baseUrl, cfg.token, resolvedModel(cfg), history).collect { chunkJson ->
+                val model = resolvedModel(cfg)
+                val (baseUrl, token) = endpointFor(cfg.model, cfg)
+                api.streamChat(baseUrl, token, model, history).collect { chunkJson ->
                     val delta = runCatching {
                         json.decodeFromString<StreamChunk>(chunkJson).choices.firstOrNull()?.delta
                     }.getOrNull() ?: return@collect
@@ -245,6 +264,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val model = resolvedModel(cfg)
+                val (baseUrl, token) = endpointFor(cfg.model, cfg)
                 val history = mutableListOf<ApiMessage>()
                 history += ApiMessage("system", agentSystemPrompt(cfg.installedSkills))
                 history += _messages.value
@@ -252,7 +272,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     .map { ApiMessage(role = it.role.name.lowercase(), content = it.content) }
 
                 loop@ for (step in 1..MAX_AGENT_STEPS) {
-                    val resp = api.complete(cfg.baseUrl, cfg.token, model, history)
+                    val resp = api.complete(baseUrl, token, model, history)
                     if (resp.isBlank()) break@loop
                     applyPlanUpdates(resp)
                     val visible = stripProtocolLines(resp)
@@ -265,6 +285,39 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     history += ApiMessage("assistant", resp)
+
+                    // Subagent delegation — independent tasks run in parallel.
+                    val delegations = Subagents.DELEGATE_RE.findAll(resp)
+                        .mapNotNull { m ->
+                            Subagents.byHandle(m.groupValues[1])?.let { it to m.groupValues[2].trim() }
+                        }
+                        .toList()
+                    if (delegations.isNotEmpty()) {
+                        val reports = coroutineScope {
+                            delegations.map { (agent, task) ->
+                                async {
+                                    val out = runCatching { runSubagent(agent, task, cfg) }
+                                        .getOrElse { "Error: ${it.message}" }
+                                    agent to out
+                                }
+                            }.awaitAll()
+                        }
+                        reports.forEach { (agent, out) ->
+                            history += ApiMessage("user", "AGENT_REPORT:${agent.handle}|$out")
+                            _messages.update { list ->
+                                list.map {
+                                    if (it.id == placeholder.id) {
+                                        it.copy(
+                                            content = it.content +
+                                                "\n\n```agent\n@${agent.handle}\n${out.take(700)}\n```\n"
+                                        )
+                                    } else it
+                                }
+                            }
+                        }
+                        refreshContext()
+                        continue@loop
+                    }
 
                     val calls = TOOL_CALL_RE.findAll(resp).map { m ->
                         m.groupValues[1] to m.groupValues[2].trim()
@@ -341,10 +394,140 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         text.lineSequence()
             .filterNot { line ->
                 val t = line.trim()
-                t.startsWith("PLAN:") || t.startsWith("STEP_DONE:") || t.startsWith("TOOL_CALL:")
+                t.startsWith("PLAN:") || t.startsWith("STEP_DONE:") ||
+                    t.startsWith("TOOL_CALL:") || t.startsWith("DELEGATE:")
             }
             .joinToString("\n")
             .trim()
+
+    private fun applyInstallIntent(intent: Marketplace.InstallIntent) {
+        val item = intent.item
+        val installed = settings.value.installedSkills
+        val already = item.id in installed
+        val next = if (intent.enable) installed + item.id else installed - item.id
+
+        val note = when {
+            intent.enable && already -> "**${item.name}** is already enabled."
+            !intent.enable && !already -> "**${item.name}** wasn't enabled."
+            intent.enable -> if (item.type == CatalogType.SKILL) {
+                "Enabled **${item.name}** — the agent can use it now."
+            } else {
+                "Marked **${item.name}** as wanted. Connectors are MCP servers that run on " +
+                    "your own machine; this app can't launch them yet, so point your MCP host " +
+                    "at `${item.url}` to actually use it."
+            }
+            else -> "Disabled **${item.name}**."
+        }
+
+        _messages.update { list ->
+            list +
+                ChatMessage(role = MessageRole.USER, content = intentEcho(intent)) +
+                ChatMessage(role = MessageRole.ASSISTANT, content = note, notice = true)
+        }
+        viewModelScope.launch { store.setInstalledSkills(next) }
+        refreshContext()
+    }
+
+    private fun intentEcho(intent: Marketplace.InstallIntent): String =
+        if (intent.enable) "Enable ${intent.item.name}" else "Disable ${intent.item.name}"
+
+    /** Zen's free models need no key; Kimi goes through the proxy. */
+    private fun endpointFor(modelId: String, cfg: AppSettings): Pair<String, String> =
+        if (Models.providerOf(modelId) == Provider.ZEN) {
+            Models.ZEN_BASE_URL to ""
+        } else {
+            cfg.baseUrl to cfg.token
+        }
+
+    /** Runs one subagent to completion and returns its report. */
+    private suspend fun runSubagent(
+        agent: Subagent,
+        task: String,
+        cfg: AppSettings,
+        onStep: (String) -> Unit = {},
+    ): String {
+        val model = agent.preferredModel ?: cfg.model
+        val (baseUrl, token) = endpointFor(model, cfg)
+        val tools = SkillEngine.all.filter { it.id in agent.tools && it.id in cfg.installedSkills }
+        val toolList = tools.joinToString("\n") { "- ${it.id}: ${it.description}" }
+
+        val history = mutableListOf(
+            ApiMessage(
+                role = "system",
+                content = buildString {
+                    append(agent.systemPrompt)
+                    if (tools.isNotEmpty()) {
+                        append("\n\nTOOL PROTOCOL: to use a tool, output one line:\n")
+                        append("TOOL_CALL:<tool>|<args>\nAvailable tools:\n")
+                        append(toolList)
+                        append("\nA TOOL_RESULT line will follow. Stop calling tools once you can answer.")
+                    }
+                },
+            ),
+            ApiMessage(role = "user", content = task),
+        )
+
+        var report = ""
+        loop@ for (step in 1..5) {
+            val resp = api.complete(baseUrl, token, model, history, maxTokens = 2048)
+            if (resp.isBlank()) break@loop
+            history += ApiMessage("assistant", resp)
+            report = stripProtocolLines(resp)
+
+            val calls = TOOL_CALL_RE.findAll(resp)
+                .map { it.groupValues[1] to it.groupValues[2].trim() }
+                .toList()
+            if (calls.isEmpty()) break@loop
+
+            for ((id, args) in calls) {
+                onStep("${agent.name}: $id")
+                val skill = tools.firstOrNull { it.id == id }
+                val result = if (skill != null) {
+                    runCatching { skill.run(args) }.getOrElse { "Error: ${it.message}" }
+                } else {
+                    "Error: \"$id\" is not available to this agent"
+                }
+                history += ApiMessage("user", "TOOL_RESULT:$id|$result")
+            }
+        }
+        return report.ifBlank { "(no output)" }
+    }
+
+    /** Direct delegation from the chat box: "@researcher ..." */
+    private fun sendToSubagent(agent: Subagent, task: String, cfg: AppSettings) {
+        val userMsg = ChatMessage(role = MessageRole.USER, content = "@${agent.handle} $task")
+        val placeholder = ChatMessage(
+            role = MessageRole.ASSISTANT,
+            content = "",
+            streaming = true,
+            agentHandle = agent.handle,
+        )
+        _messages.update { it + userMsg + placeholder }
+        _isStreaming.value = true
+        _isAgentTurn.value = true
+        _tasks.value = listOf(AgentTask("${agent.name} working…", TaskStatus.ACTIVE))
+        viewModelScope.launch {
+            try {
+                val report = runSubagent(agent, task, cfg) { step ->
+                    _tasks.value = listOf(AgentTask(step, TaskStatus.ACTIVE))
+                }
+                _messages.update { list ->
+                    list.map {
+                        if (it.id == placeholder.id) it.copy(content = report, streaming = false)
+                        else it
+                    }
+                }
+                _tasks.update { list -> list.map { it.copy(status = TaskStatus.DONE) } }
+                _isConnected.value = true
+                refreshContext()
+            } catch (e: Exception) {
+                failPlaceholder(placeholder, e)
+            } finally {
+                _isStreaming.value = false
+                _isAgentTurn.value = false
+            }
+        }
+    }
 
     private fun agentSystemPrompt(installed: Set<String>): String {
         val tools = SkillEngine.all
@@ -361,7 +544,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             append("TOOL_CALL:<tool>|<args>\n")
             append("Available tools:\n")
             append(if (tools.isBlank()) "(none installed)" else tools)
-            append("\n\nAfter each tool runs, a TOOL_RESULT line will appear — use it and continue. ")
+            append("\n\nDELEGATION: for a self-contained chunk of work, hand it to a subagent:\n")
+            append("DELEGATE:<handle>|<task>\n")
+            append("Available subagents:\n")
+            append(Subagents.all.joinToString("\n") { "- ${it.handle}: ${it.description}" })
+            append("\nIssue several DELEGATE lines at once and they run in parallel. ")
+            append("Each replies with AGENT_REPORT. Delegate research and heavy reading so ")
+            append("this conversation stays focused.\n")
+            append("\nAfter each tool runs, a TOOL_RESULT line will appear — use it and continue. ")
             append("Never invent tool output; if a tool errors, say so and try another way. ")
             append("When the task is complete, give a concise final answer and stop calling tools.")
         }

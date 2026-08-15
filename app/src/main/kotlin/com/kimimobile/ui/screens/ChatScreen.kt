@@ -583,6 +583,7 @@ private fun ModelSheet(
                 modifier = Modifier.height(420.dp),
             ) {
                 items(Models.all, key = { it.id }) { model ->
+                    val isFree = model.provider == com.kimimobile.data.Provider.ZEN
                     val selected = model.id == selectedId
                     Surface(
                         onClick = { onSelect(model.id) },
@@ -599,7 +600,11 @@ private fun ModelSheet(
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.weight(1f),
                                 )
-                                if (model.vision) CapabilityTag("vision")
+                                if (isFree) CapabilityTag("free")
+                                if (model.vision) {
+                                    Spacer(Modifier.width(4.dp))
+                                    CapabilityTag("vision")
+                                }
                                 if (model.reasoning) {
                                     Spacer(Modifier.width(4.dp))
                                     CapabilityTag("thinking")

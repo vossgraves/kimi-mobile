@@ -1,8 +1,12 @@
 package com.kimimobile
 
 import com.kimimobile.data.Calculator
+import com.kimimobile.data.Marketplace
 import com.kimimobile.data.Models
+import com.kimimobile.data.Provider
+import com.kimimobile.data.Subagents
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -70,6 +74,45 @@ class LogicTests {
     fun `calculator rejects division by zero instead of returning infinity`() {
         val failed = runCatching { Calculator.eval("1/0") }.isFailure
         assertTrue("division by zero must throw, not return Infinity", failed)
+    }
+
+    @Test
+    fun `zen models keep their id, kimi models take suffixes`() {
+        // Zen has no -search variants; sending one would 400.
+        assertEquals(
+            "nemotron-3.5-lightning-free",
+            Models.resolve("nemotron-3.5-lightning-free", search = true, math = true),
+        )
+        assertEquals(
+            "kimi-k2-0905-preview-search",
+            Models.resolve("kimi-k2-0905-preview", search = true),
+        )
+        assertEquals(Provider.ZEN, Models.providerOf("hy3-free"))
+        assertEquals(Provider.KIMI, Models.providerOf("kimi-k2-thinking"))
+    }
+
+    @Test
+    fun `subagent mentions only parse at the start with a known handle`() {
+        assertEquals("researcher", Subagents.parseMention("@researcher find X")?.first?.handle)
+        assertEquals("find X", Subagents.parseMention("@researcher find X")?.second)
+        assertNull(Subagents.parseMention("email me @researcher later"))
+        assertNull(Subagents.parseMention("@nobody do things"))
+        assertNull(Subagents.parseMention("@researcher"))
+        assertNull(Subagents.parseMention("plain message"))
+    }
+
+    @Test
+    fun `install intent understands plain requests`() {
+        val add = Marketplace.parseInstallIntent("add web search skill")
+        assertEquals("web_search", add?.item?.id)
+        assertEquals(true, add?.enable)
+
+        val off = Marketplace.parseInstallIntent("turn off memory notes")
+        assertEquals("memory", off?.item?.id)
+        assertEquals(false, off?.enable)
+
+        assertNull(Marketplace.parseInstallIntent("what is the weather today"))
+        assertNull(Marketplace.parseInstallIntent("enable something unknown"))
     }
 
     @Test

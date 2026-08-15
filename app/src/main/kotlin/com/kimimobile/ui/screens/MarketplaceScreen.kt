@@ -153,6 +153,21 @@ fun MarketplaceScreenContent(
                 }
             }
             Spacer(Modifier.height(8.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Skills run inside this app. Connectors are MCP servers that run on your " +
+                        "own machine — installing one saves the preference and shows you where " +
+                        "to point your MCP host.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(10.dp),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             LazyColumn(
                 contentPadding = PaddingValues(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -213,7 +228,7 @@ private fun MarketplaceCard(
                         else MaterialTheme.colorScheme.tertiaryContainer,
                     ) {
                         Text(
-                            if (item.type == CatalogType.SKILL) "skill" else "connector",
+                            if (item.type == CatalogType.SKILL) "runs in app" else "needs MCP host",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (item.type == CatalogType.SKILL)
                                 MaterialTheme.colorScheme.onPrimaryContainer

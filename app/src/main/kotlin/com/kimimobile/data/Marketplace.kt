@@ -92,4 +92,31 @@ object Marketplace {
     fun byId(id: String): CatalogItem? = catalog.firstOrNull { it.id == id }
 
     fun categories(): List<String> = catalog.map { it.category }.distinct().sorted()
+
+    private val INSTALL_INTENT = Regex(
+        """^\s*(?:please\s+)?(install|add|enable|turn on|activate|disable|remove|turn off)\s+(?:the\s+)?(.+?)\s*(?:skill|tool|connector|mcp|plugin)?\s*$""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    data class InstallIntent(val item: CatalogItem, val enable: Boolean)
+
+    /**
+     * Understands "add web search", "enable the github connector",
+     * "turn off memory" — so tools can be managed by asking, not just by
+     * hunting through the marketplace.
+     */
+    fun parseInstallIntent(input: String): InstallIntent? {
+        val match = INSTALL_INTENT.find(input.trim()) ?: return null
+        val verb = match.groupValues[1].lowercase()
+        val target = match.groupValues[2].trim().lowercase()
+        if (target.isBlank() || target.length > 40) return null
+
+        val enable = verb !in setOf("disable", "remove", "turn off")
+        val item = catalog.firstOrNull { it.name.equals(target, ignoreCase = true) }
+            ?: catalog.firstOrNull { it.id.replace('_', ' ').equals(target, ignoreCase = true) }
+            ?: catalog.firstOrNull { it.name.lowercase().contains(target) }
+            ?: catalog.firstOrNull { target.contains(it.name.lowercase()) }
+            ?: return null
+        return InstallIntent(item, enable)
+    }
 }
