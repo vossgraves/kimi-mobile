@@ -12,18 +12,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,8 +45,9 @@ data class AgentTask(
 )
 
 /**
- * Live plan tracker docked above the composer, v0-style: collapsed it's a
- * single progress line, expanded it lists each step with its state.
+ * Task list in the opencode CLI's idiom: a monospace checklist with
+ * [ ] / [~] / [x] markers, docked above the composer. Collapsed it shows the
+ * active line and a count; expanded it's the whole list.
  */
 @Composable
 fun TaskListBar(
@@ -65,7 +63,7 @@ fun TaskListBar(
     val arrow by animateFloatAsState(if (expanded) 180f else 0f, label = "task-arrow")
 
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = modifier
             .fillMaxWidth()
@@ -76,52 +74,47 @@ fun TaskListBar(
                 Modifier
                     .fillMaxWidth()
                     .clickable { expanded = !expanded }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (allDone) {
-                    Icon(
-                        Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp),
+                    Text(
+                        "✓",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 } else {
                     CircularProgressIndicator(
                         strokeWidth = 2.dp,
-                        modifier = Modifier.size(14.dp),
+                        modifier = Modifier.size(12.dp),
                     )
                 }
                 Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = if (allDone) "Done" else active?.text ?: "Working…",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        "$done of ${tasks.size} steps",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(
+                    text = if (allDone) "All steps complete" else active?.text ?: "Working…",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "$done/${tasks.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Icon(
                     Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "Collapse plan" else "Expand plan",
+                    contentDescription = if (expanded) "Collapse" else "Expand",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
-                        .size(18.dp)
+                        .padding(start = 4.dp)
+                        .size(16.dp)
                         .rotate(arrow),
                 )
             }
-
-            LinearProgressIndicator(
-                progress = { done.toFloat() / tasks.size },
-                modifier = Modifier.fillMaxWidth(),
-                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-            )
 
             AnimatedVisibility(
                 visible = expanded,
@@ -129,33 +122,32 @@ fun TaskListBar(
                 exit = fadeOut() + shrinkVertically(),
             ) {
                 Column(
-                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
                     tasks.forEach { task ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            when (task.status) {
-                                TaskStatus.DONE -> Icon(
-                                    Icons.Default.CheckCircle,
-                                    contentDescription = "Done",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                                TaskStatus.ACTIVE -> CircularProgressIndicator(
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(13.dp),
-                                )
-                                TaskStatus.PENDING -> Icon(
-                                    Icons.Default.RadioButtonUnchecked,
-                                    contentDescription = "Pending",
-                                    tint = MaterialTheme.colorScheme.outlineVariant,
-                                    modifier = Modifier.size(15.dp),
-                                )
-                            }
-                            Spacer(Modifier.width(10.dp))
+                        Row(verticalAlignment = Alignment.Top) {
+                            // CLI-style status marker.
+                            Text(
+                                text = when (task.status) {
+                                    TaskStatus.DONE -> "[x]"
+                                    TaskStatus.ACTIVE -> "[~]"
+                                    TaskStatus.PENDING -> "[ ]"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Medium,
+                                color = when (task.status) {
+                                    TaskStatus.DONE -> MaterialTheme.colorScheme.primary
+                                    TaskStatus.ACTIVE -> MaterialTheme.colorScheme.tertiary
+                                    TaskStatus.PENDING -> MaterialTheme.colorScheme.outline
+                                },
+                            )
+                            Spacer(Modifier.width(8.dp))
                             Text(
                                 text = task.text,
                                 style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
                                 color = when (task.status) {
                                     TaskStatus.DONE -> MaterialTheme.colorScheme.onSurfaceVariant
                                     TaskStatus.ACTIVE -> MaterialTheme.colorScheme.onSurface

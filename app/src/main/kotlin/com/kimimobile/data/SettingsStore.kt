@@ -24,6 +24,15 @@ data class AppSettings(
     /** Optional: unlocks Zen's paid catalogue (free models need no key). */
     val zenApiKey: String = "",
     val onboarded: Boolean = false,
+    /** Primary agent mode: chat | plan | build | auto. */
+    val agentMode: String = "chat",
+    val reasoningEffort: String = "medium",
+    /** Custom MCP servers as "label|url" lines. */
+    val customMcpServers: Set<String> = emptySet(),
+    /** Custom skills as "id|name|description|url" lines. */
+    val customSkills: Set<String> = emptySet(),
+    /** Extra registry endpoints to search alongside the official one. */
+    val customRegistries: Set<String> = emptySet(),
     // Context window management. Set from the selected model (K2 = 256k,
     // Moonshot 8k/32k/128k); the web API reports no usage, so we estimate
     // from characters and compare against this max.
@@ -48,6 +57,11 @@ class SettingsStore(private val context: Context) {
         val UPDATE_CHANNEL = stringPreferencesKey("update_channel")
         val ZEN_API_KEY = stringPreferencesKey("zen_api_key")
         val ONBOARDED = booleanPreferencesKey("onboarded")
+        val AGENT_MODE = stringPreferencesKey("agent_mode")
+        val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")
+        val CUSTOM_MCP = stringSetPreferencesKey("custom_mcp_servers")
+        val CUSTOM_SKILLS = stringSetPreferencesKey("custom_skills")
+        val CUSTOM_REGISTRIES = stringSetPreferencesKey("custom_registries")
         val MAX_CONTEXT_TOKENS = longPreferencesKey("max_context_tokens")
         val AUTO_COMPACT = booleanPreferencesKey("auto_compact")
         val COMPACT_THRESHOLD = intPreferencesKey("compact_threshold")
@@ -66,6 +80,11 @@ class SettingsStore(private val context: Context) {
             updateChannel = prefs[Keys.UPDATE_CHANNEL] ?: "STABLE",
             zenApiKey = prefs[Keys.ZEN_API_KEY] ?: "",
             onboarded = prefs[Keys.ONBOARDED] ?: false,
+            agentMode = prefs[Keys.AGENT_MODE] ?: "chat",
+            reasoningEffort = prefs[Keys.REASONING_EFFORT] ?: "medium",
+            customMcpServers = prefs[Keys.CUSTOM_MCP] ?: emptySet(),
+            customSkills = prefs[Keys.CUSTOM_SKILLS] ?: emptySet(),
+            customRegistries = prefs[Keys.CUSTOM_REGISTRIES] ?: emptySet(),
             maxContextTokens = prefs[Keys.MAX_CONTEXT_TOKENS] ?: AppSettings().maxContextTokens,
             autoCompact = prefs[Keys.AUTO_COMPACT] ?: AppSettings().autoCompact,
             compactThresholdPct = prefs[Keys.COMPACT_THRESHOLD] ?: AppSettings().compactThresholdPct,
@@ -109,6 +128,26 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setMathEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[Keys.MATH] = enabled }
+    }
+
+    suspend fun setAgentMode(mode: String) {
+        context.dataStore.edit { prefs -> prefs[Keys.AGENT_MODE] = mode }
+    }
+
+    suspend fun setReasoningEffort(effort: String) {
+        context.dataStore.edit { prefs -> prefs[Keys.REASONING_EFFORT] = effort }
+    }
+
+    suspend fun setCustomMcpServers(servers: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[Keys.CUSTOM_MCP] = servers }
+    }
+
+    suspend fun setCustomSkills(skills: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[Keys.CUSTOM_SKILLS] = skills }
+    }
+
+    suspend fun setCustomRegistries(registries: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[Keys.CUSTOM_REGISTRIES] = registries }
     }
 
     suspend fun setOnboarded(done: Boolean) {
