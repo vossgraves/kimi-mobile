@@ -188,10 +188,10 @@ fun LoginScreen(
                             // "; wv" tag that gets SPAs to serve a blank shell.
                             userAgentString = WebViewUa.desktopClassMobile(ctx)
                         }
-                        CookieManager.getInstance().apply {
-                            setAcceptCookie(true)
-                            setAcceptThirdPartyCookies(this@apply, true)
-                        }
+                        // `this` here is the WebView; using apply on the
+                        // CookieManager would pass the wrong receiver.
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         addJavascriptInterface(bridge, "Android")
 
                         // Module scripts and OAuth popups need a chrome client;
