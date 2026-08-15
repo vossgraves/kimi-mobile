@@ -49,9 +49,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kimimobile.data.KimiModel
+import com.kimimobile.data.Models
 import com.kimimobile.data.Provider
 import com.kimimobile.data.ReasoningEffort
-import java.util.Locale
 
 /**
  * Model picker in the shape Claude uses: a sheet off the composer, each model
@@ -63,6 +63,7 @@ import java.util.Locale
 fun ModelPickerSheet(
     models: List<KimiModel>,
     hasZenKey: Boolean,
+    kimiHidden: Boolean = false,
     selectedId: String,
     effort: ReasoningEffort,
     onSelect: (String) -> Unit,
@@ -115,6 +116,22 @@ fun ModelPickerSheet(
                 modifier = Modifier.heightIn(max = 460.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                if (kimiHidden) {
+                    item(key = "kimi-hint") {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "Sign in to Kimi in Settings to unlock K3 and the K2 family — free with your account.",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(12.dp),
+                            )
+                        }
+                    }
+                }
                 grouped.forEach { (provider, entries) ->
                     item(key = "header-${provider.id}") {
                         Text(
@@ -191,7 +208,7 @@ private fun ModelRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        String.format(Locale.US, "%,d tokens", model.contextTokens),
+                        "${Models.compactTokens(model.contextTokens)} context",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline,
                     )

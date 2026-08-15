@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
@@ -158,16 +157,28 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch { conversations.refresh() }
-        // Find the proxy automatically so nobody has to type a URL.
+        // Find the proxy automatically so nobody has to type a URL, and
+        // again whenever the token changes — signing in used to leave the
+        // app pointed at an unreachable default and report "connection
+        // failed" right after a successful login.
         viewModelScope.launch {
-            val cfg = settings.first { it.loaded }
-            if (cfg.proxyAutoDetected || cfg.baseUrl.isBlank()) {
-                _discoveringProxy.value = true
-                val found = ProxyDiscovery.discover(cfg.baseUrl.takeIf { it.isNotBlank() })
-                if (found != null && found != cfg.baseUrl) {
-                    store.setBaseUrl(found)
+            var lastToken: String? = null
+            settings.collect { cfg ->
+                if (!cfg.loaded) return@collect
+                val tokenChanged = lastToken != null && lastToken != cfg.token
+                val firstRun = lastToken == null
+                lastToken = cfg.token
+                if ((firstRun && (cfg.proxyAutoDetected || cfg.baseUrl.isBlank())) || tokenChanged) {
+                    _discoveringProxy.value = true
+                    val found = ProxyDiscovery.discover(cfg.baseUrl.takeIf { it.isNotBlank() })
+                    if (found != null && found != cfg.baseUrl) {
+                        store.setBaseUrl(found)
+                    }
+                    _discoveringProxy.value = false
+                    if (tokenChanged && cfg.token.isNotBlank()) {
+                        _isConnected.value = null // let the next probe re-check
+                    }
                 }
-                _discoveringProxy.value = false
             }
         }
         // Pull the real model list as soon as settings are available.
@@ -381,36 +392,62 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
 
-                val model = Models.resolve(
-                    baseId = cfg.model,
-                    search = cfg.searchEnabled,
-                    research = cfg.researchEnabled,
-                    math = cfg.mathEnabled,
-                )
-                val (baseUrl, token) = endpointFor(cfg.model, cfg)
-                // Only send effort to models that actually reason.
-                val effort = if (Models.byId(cfg.model)?.reasoning == true) {
-                    ReasoningEffort.byId(cfg.reasoningEffort).id
-                } else null
-                api.streamChat(baseUrl, token, model, history, effort).collect { chunkJson ->
-                    val delta = runCatching {
-                        json.decodeFromString<StreamChunk>(chunkJson).choices.firstOrNull()?.delta
-                    }.getOrNull() ?: return@collect
-                    val content = delta.content.orEmpty()
-                    val reasoning = delta.reasoningContent.orEmpty()
-                    if (content.isNotEmpty() || reasoning.isNotEmpty()) {
-                        _messages.update { list ->
-                            list.map { msg ->
-                                if (msg.id == placeholder.id) {
-                                    msg.copy(
-                                        content = msg.content + content,
-                                        reasoning = msg.reasoning + reasoning,
-                                    )
-                                } else msg
+                // The free Zen pool rate-limits per model; when the chosen one
+                // is saturated, fail over to the next free model instead of
+                // dying — the user asked a question, not for an error.
+                val candidates = buildList {
+                    add(cfg.model)
+                    val current = Models.byId(cfg.model)
+                    if (current?.provider == Provider.ZEN && !current.requiresKey) {
+                        _availableModels.value
+                            .filter {
+                                it.provider == Provider.ZEN && !it.requiresKey &&
+                                    it.id != cfg.model
                             }
-                        }
+                            .take(2)
+                            .forEach { add(it.id) }
                     }
                 }
+
+                var lastRateLimit: Exception? = null
+                var served = false
+                candidateLoop@ for ((index, candidate) in candidates.withIndex()) {
+                    val model = Models.resolve(
+                        baseId = candidate,
+                        search = cfg.searchEnabled,
+                        research = cfg.researchEnabled,
+                        math = cfg.mathEnabled,
+                    )
+                    val (baseUrl, token) = endpointFor(candidate, cfg)
+                    val effort = if (Models.byId(candidate)?.reasoning == true) {
+                        ReasoningEffort.byId(cfg.reasoningEffort).id
+                    } else null
+                    try {
+                        if (index > 0) {
+                            _error.value = "${Models.byId(cfg.model)?.name} is rate-limited — " +
+                                "answering with ${Models.byId(candidate)?.name}"
+                            // Drop anything a failed candidate managed to stream.
+                            _messages.update { list ->
+                                list.map {
+                                    if (it.id == placeholder.id) it.copy(content = "", reasoning = "")
+                                    else it
+                                }
+                            }
+                        }
+                        streamInto(placeholder, baseUrl, token, model, history, effort)
+                        served = true
+                        break@candidateLoop
+                    } catch (e: Exception) {
+                        val limited = e.message?.contains("rate-limit", true) == true ||
+                            e.message?.contains("Rate limit", true) == true
+                        if (limited && index < candidates.lastIndex) {
+                            lastRateLimit = e
+                            continue@candidateLoop
+                        }
+                        throw e
+                    }
+                }
+                if (!served) throw (lastRateLimit ?: IllegalStateException("No model available"))
                 finalizeAssistant(placeholder, null)
                 maybeAutoCompact()
             } catch (e: Exception) {
@@ -418,6 +455,36 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 _isStreaming.value = false
                 _tasks.value = emptyList()
+            }
+        }
+    }
+
+    /** Streams one completion into the placeholder message. */
+    private suspend fun streamInto(
+        placeholder: ChatMessage,
+        baseUrl: String,
+        token: String,
+        model: String,
+        history: List<ApiMessage>,
+        effort: String?,
+    ) {
+        api.streamChat(baseUrl, token, model, history, effort).collect { chunkJson ->
+            val delta = runCatching {
+                json.decodeFromString<StreamChunk>(chunkJson).choices.firstOrNull()?.delta
+            }.getOrNull() ?: return@collect
+            val content = delta.content.orEmpty()
+            val reasoning = delta.reasoningContent.orEmpty()
+            if (content.isNotEmpty() || reasoning.isNotEmpty()) {
+                _messages.update { list ->
+                    list.map { msg ->
+                        if (msg.id == placeholder.id) {
+                            msg.copy(
+                                content = msg.content + content,
+                                reasoning = msg.reasoning + reasoning,
+                            )
+                        } else msg
+                    }
+                }
             }
         }
     }
@@ -637,8 +704,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Zen's free models need no key; Kimi goes through the proxy. */
     private fun endpointFor(modelId: String, cfg: AppSettings): Pair<String, String> =
         if (Models.providerOf(modelId) == Provider.ZEN) {
-            // Free models answer without a key; paid ones use the one you add.
-            Models.ZEN_BASE_URL to cfg.zenApiKey
+            // opencode CLI sends the literal key "public" when anonymous —
+            // matching it keeps us in the same request class it uses.
+            Models.ZEN_BASE_URL to cfg.zenApiKey.ifBlank { "public" }
         } else {
             cfg.baseUrl to cfg.token
         }
@@ -963,10 +1031,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         send(lastUser.content)
     }
 
-    /** Non-network warm check: pings the API only if we haven't connected yet. */
+    /** Warm connectivity probe — silent, so app-open never shows an error. */
     fun ensureConnected() {
-        if (_isConnected.value == null && settings.value.token.isNotBlank()) {
-            viewModelScope.launch { testConnection() }
+        if (_isConnected.value != null) return
+        viewModelScope.launch {
+            val cfg = settings.value
+            if (Models.providerOf(cfg.model) == Provider.KIMI && cfg.token.isBlank()) return@launch
+            val before = _error.value
+            testConnection()
+            _error.value = before // probe results never surface as snackbars
         }
     }
 

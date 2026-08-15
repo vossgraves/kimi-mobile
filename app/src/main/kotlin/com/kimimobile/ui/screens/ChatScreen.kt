@@ -79,6 +79,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -276,9 +277,17 @@ fun ChatScreen(
 
     if (showModelSheet) {
         ModelPickerSheet(
-            // Show everything, including paid Zen models — they render as
-            // locked rather than vanishing, so you can see what a key buys.
-            models = availableModels.filterNot { it.hidden },
+            // Only models that can actually answer right now: Kimi needs a
+            // token, paid Zen needs a key, free Zen always works.
+            models = availableModels.filterNot { it.hidden }.filter { model ->
+                when {
+                    model.provider == com.kimimobile.data.Provider.KIMI ->
+                        settings.token.isNotBlank()
+                    model.requiresKey -> settings.zenApiKey.isNotBlank()
+                    else -> true
+                }
+            },
+            kimiHidden = settings.token.isBlank(),
             hasZenKey = settings.zenApiKey.isNotBlank(),
             selectedId = settings.model,
             effort = ReasoningEffort.byId(settings.reasoningEffort),
@@ -731,13 +740,9 @@ private fun ContextSheet(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = String.format(
-                    Locale.US,
-                    "%,d of %,d tokens · %d messages",
-                    context.tokens,
-                    context.maxTokens,
-                    context.messageCount,
-                ),
+                text = "${Models.compactTokens(context.tokens)} of " +
+                    "${Models.compactTokens(context.maxTokens)} tokens · " +
+                    "${context.messageCount} messages",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -915,9 +920,34 @@ private fun ChatMessageList(
 ) {
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length, isStreaming) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    // Are we parked at the bottom? Anything within a screen-ish of the end
+    // counts, so a small drag doesn't immediately disable following.
+    val atBottom by remember {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+                ?: return@derivedStateOf true
+            last.index >= listState.layoutInfo.totalItemsCount - 1 &&
+                last.offset + last.size <= listState.layoutInfo.viewportEndOffset + 120
+        }
+    }
+
+    // Follow new output only while the user is already at the bottom. Scrolling
+    // up during a reply used to be impossible — every token yanked the list
+    // back down.
+    var following by remember { mutableStateOf(true) }
+    LaunchedEffect(atBottom, isStreaming) {
+        if (atBottom) following = true
+    }
+    // Any deliberate drag away from the bottom stops the follow.
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress && !atBottom) following = false
+    }
+
+    LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length, following) {
+        if (following && messages.isNotEmpty()) {
+            // scrollToItem, not animateScrollToItem: an animation per token
+            // competes with touch input.
+            listState.scrollToItem(messages.lastIndex)
         }
     }
 
@@ -926,18 +956,58 @@ private fun ChatMessageList(
         return
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        items(messages, key = { it.id }) { message ->
-            MessageBubble(
-                message = message,
-                showTyping = isStreaming && message == messages.lastOrNull() && message.role == MessageRole.ASSISTANT,
-                onRetry = onRetry,
-            )
+    Box(modifier = modifier.fillMaxWidth()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            items(messages, key = { it.id }) { message ->
+                MessageBubble(
+                    message = message,
+                    showTyping = isStreaming && message == messages.lastOrNull() &&
+                        message.role == MessageRole.ASSISTANT,
+                    onRetry = onRetry,
+                )
+            }
+        }
+
+        // Jump back down once you've scrolled away.
+        AnimatedVisibility(
+            visible = !following,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 10.dp),
+        ) {
+            val scope = rememberCoroutineScope()
+            Surface(
+                onClick = {
+                    following = true
+                    scope.launch { listState.animateScrollToItem(messages.lastIndex) }
+                },
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                shadowElevation = 3.dp,
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.ExpandMore,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (isStreaming) "Jump to latest" else "Jump to bottom",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
         }
     }
 }
@@ -1224,14 +1294,10 @@ private fun Composer(
                 ) {
                     Text(
                         text = if (isZenModel) {
-                            String.format(
-                                Locale.US,
-                                "%,d tokens · $%.4f",
-                                sessionSpend.tokens,
-                                sessionSpend.costUsd,
-                            )
+                            "${Models.compactTokens(sessionSpend.tokens)} tokens · " +
+                                String.format(Locale.US, "$%.4f", sessionSpend.costUsd)
                         } else {
-                            String.format(Locale.US, "%,d tokens this session", sessionSpend.tokens)
+                            "${Models.compactTokens(sessionSpend.tokens)} tokens this session"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.outline,

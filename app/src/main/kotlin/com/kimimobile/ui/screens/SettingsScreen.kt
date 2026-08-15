@@ -65,6 +65,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kimimobile.BuildConfig
+import com.kimimobile.data.Models
 import com.kimimobile.ui.ChatViewModel
 import com.kimimobile.ui.components.SettingsRow
 import com.kimimobile.ui.components.SettingsSection
@@ -309,13 +310,9 @@ fun SettingsScreen(
             // ---- Context ----
             SettingsSection(
                 title = "Context",
-                subtitle = String.format(
-                    Locale.US,
-                    "%d%% used · %,d / %,d tokens",
-                    (contextState.pct * 100).toInt(),
-                    contextState.tokens,
-                    contextState.maxTokens,
-                ),
+                subtitle = "${(contextState.pct * 100).toInt()}% used · " +
+                    "${Models.compactTokens(contextState.tokens)} / " +
+                    "${Models.compactTokens(contextState.maxTokens)}",
             ) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     OutlinedTextField(

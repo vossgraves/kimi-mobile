@@ -81,7 +81,10 @@ object ModelCatalog {
             response.body?.string().orEmpty()
         }
         val data = json.parseToJsonElement(body).jsonObject["data"]?.jsonArray ?: return emptyList()
-        return data.mapNotNull { element ->
+        // The proxy's metadata predates K3, but kimi.com itself runs K3 and
+        // answers to the name (verified live) — so it's always offered first.
+        val k3 = Models.byId("kimi-k3")
+        val listed = data.mapNotNull { element ->
             val obj = element.jsonObject
             val id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
             val known = Models.byId(id)
@@ -98,6 +101,7 @@ object ModelCatalog {
                 hidden = isVision,
             )
         }
+        return listOfNotNull(k3) + listed.filterNot { it.id == "kimi-k3" }
     }
 
     /** Kimi ids encode their window: moonshot-v1-32k, k2 = 256k. */

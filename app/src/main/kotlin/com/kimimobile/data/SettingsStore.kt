@@ -16,7 +16,7 @@ private val Context.dataStore by preferencesDataStore(name = "kimi_settings")
 data class AppSettings(
     /** Distinguishes defaults from values actually read off disk. */
     val loaded: Boolean = false,
-    val baseUrl: String = "http://10.0.2.2:8000/v1",
+    val baseUrl: String = "http://127.0.0.1:8000/v1",
     val token: String = "",
     val model: String = "kimi-k2-0905-preview",
     val searchEnabled: Boolean = false,

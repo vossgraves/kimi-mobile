@@ -32,6 +32,13 @@ object Models {
 
     private val kimiModels = listOf(
         KimiModel(
+            id = "kimi-k3",
+            name = "Kimi K3",
+            description = "Moonshot's flagship — what kimi.com itself runs",
+            contextTokens = 262_144,
+            reasoning = true,
+        ),
+        KimiModel(
             id = "kimi-k2-0905-preview",
             name = "K2 · 0905",
             description = "Latest K2 — strongest agentic coding, prettier code output",
@@ -170,15 +177,6 @@ object Models {
 
     /** Zen's paid catalogue — unlocked by adding an API key in Settings. */
     private val zenKeyedModels = listOf(
-        KimiModel(
-            id = "kimi-k3",
-            name = "Kimi K3",
-            description = "Moonshot's flagship — 1M context, agentic coding",
-            contextTokens = 1_048_576,
-            provider = Provider.ZEN,
-            reasoning = true,
-            requiresKey = true,
-        ),
         KimiModel(
             id = "kimi-k2.6",
             name = "Kimi K2.6",
@@ -351,4 +349,15 @@ object Models {
     /** Context window for a resolved model id, for the usage ring. */
     fun contextTokensFor(modelId: String): Long =
         byId(modelId)?.contextTokens ?: 131_072L
+
+    /** "1M", "262K", "8K" — token counts as humans say them. */
+    fun compactTokens(tokens: Long): String = when {
+        tokens >= 950_000 -> {
+            // Round to one decimal, drop it when it's .0 — 1,048,576 is "1M".
+            val tenths = Math.round(tokens / 100_000.0)
+            if (tenths % 10 == 0L) "${tenths / 10}M" else "${tenths / 10}.${tenths % 10}M"
+        }
+        tokens >= 1_000 -> "${Math.round(tokens / 1_000.0)}K"
+        else -> tokens.toString()
+    }
 }
