@@ -94,7 +94,9 @@ import com.kimimobile.ui.ChatMessage
 import com.kimimobile.ui.ChatViewModel
 import com.kimimobile.ui.ContextState
 import com.kimimobile.ui.MessageRole
+import com.kimimobile.ui.components.AgentTask
 import com.kimimobile.ui.components.MarkdownText
+import com.kimimobile.ui.components.TaskListBar
 import com.kimimobile.ui.components.ThinkingBlock
 import com.kimimobile.ui.components.TypingIndicator
 import java.util.Locale
@@ -119,6 +121,7 @@ fun ChatScreen(
     val contextState by viewModel.contextState.collectAsState()
     val settings by viewModel.settings.collectAsState()
     val pendingImages by viewModel.pendingImages.collectAsState()
+    val tasks by viewModel.tasks.collectAsState()
 
     var input by rememberSaveable { mutableStateOf("") }
     var showContextSheet by rememberSaveable { mutableStateOf(false) }
@@ -168,6 +171,7 @@ fun ChatScreen(
         researchEnabled = settings.researchEnabled,
         mathEnabled = settings.mathEnabled,
         pendingImages = pendingImages,
+        tasks = tasks,
         supportsVision = currentModel.vision,
         onAttachImage = {
             imagePicker.launch(
@@ -247,6 +251,7 @@ fun ChatScreenContent(
     researchEnabled: Boolean = false,
     mathEnabled: Boolean = false,
     pendingImages: List<String> = emptyList(),
+    tasks: List<AgentTask> = emptyList(),
     supportsVision: Boolean = false,
     onAttachImage: () -> Unit = {},
     onRemoveImage: (String) -> Unit = {},
@@ -345,6 +350,8 @@ fun ChatScreenContent(
                     onRetry = onRetry,
                     modifier = Modifier.weight(1f),
                 )
+                // v0-style plan tracker, docked directly above the composer.
+                TaskListBar(tasks = tasks)
                 Composer(
                     input = input,
                     onInputChange = onInputChange,

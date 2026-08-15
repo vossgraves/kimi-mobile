@@ -10,6 +10,8 @@ import com.kimimobile.data.Models
 import com.kimimobile.data.SettingsStore
 import com.kimimobile.data.SkillEngine
 import com.kimimobile.data.StreamChunk
+import com.kimimobile.ui.components.AgentTask
+import com.kimimobile.ui.components.TaskStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -71,6 +73,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val _contextState = MutableStateFlow(ContextState())
     val contextState: StateFlow<ContextState> = _contextState.asStateFlow()
 
+    /** Live plan for the current agent run, shown above the composer. */
+    private val _tasks = MutableStateFlow<List<AgentTask>>(emptyList())
+    val tasks: StateFlow<List<AgentTask>> = _tasks.asStateFlow()
+
     /** Images staged in the composer, as base64 data URLs. */
     private val _pendingImages = MutableStateFlow<List<String>>(emptyList())
     val pendingImages: StateFlow<List<String>> = _pendingImages.asStateFlow()
@@ -81,6 +87,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val MAX_AGENT_STEPS = 8
         private val TOOL_CALL_RE = Regex("""TOOL_CALL:([a-z_0-9]+)\|([^\n]*)""")
+        private val PLAN_RE = Regex("""PLAN:\s*([^\n]+)""")
+        private val STEP_DONE_RE = Regex("""STEP_DONE:\s*(\d+)""")
 
         /** Rough token estimate: ~4 chars/token + per-message overhead. */
         fun estimateTokens(texts: List<String>): Long =
@@ -233,6 +241,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _isStreaming.value = true
         _isAgentTurn.value = true
         _isConnected.value = null
+        _tasks.value = emptyList()
         viewModelScope.launch {
             try {
                 val model = resolvedModel(cfg)
@@ -245,8 +254,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 loop@ for (step in 1..MAX_AGENT_STEPS) {
                     val resp = api.complete(cfg.baseUrl, cfg.token, model, history)
                     if (resp.isBlank()) break@loop
-                    _messages.update { list ->
-                        list.map { if (it.id == placeholder.id) it.copy(content = it.content + resp) else it }
+                    applyPlanUpdates(resp)
+                    val visible = stripProtocolLines(resp)
+                    if (visible.isNotBlank()) {
+                        _messages.update { list ->
+                            list.map {
+                                if (it.id == placeholder.id) it.copy(content = it.content + visible)
+                                else it
+                            }
+                        }
                     }
                     history += ApiMessage("assistant", resp)
 
@@ -277,6 +293,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         refreshContext()
                     }
                 }
+                _tasks.update { list -> list.map { it.copy(status = TaskStatus.DONE) } }
                 finalizeAssistant(placeholder, null)
                 maybeAutoCompact()
             } catch (e: Exception) {
@@ -288,6 +305,47 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Reads PLAN: / STEP_DONE: lines the agent emits and drives the task bar.
+     * Declaring a plan is optional — the bar just stays hidden without one.
+     */
+    private fun applyPlanUpdates(chunk: String) {
+        val planned = PLAN_RE.findAll(chunk)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() }
+            .toList()
+        if (planned.isNotEmpty() && _tasks.value.isEmpty()) {
+            _tasks.value = planned.mapIndexed { index, text ->
+                AgentTask(text, if (index == 0) TaskStatus.ACTIVE else TaskStatus.PENDING)
+            }
+        }
+        STEP_DONE_RE.findAll(chunk).forEach { match ->
+            val oneBased = match.groupValues[1].toIntOrNull() ?: return@forEach
+            val index = oneBased - 1
+            _tasks.update { list ->
+                if (index !in list.indices) list
+                else list.mapIndexed { i, task ->
+                    when {
+                        i == index -> task.copy(status = TaskStatus.DONE)
+                        i == index + 1 && task.status == TaskStatus.PENDING ->
+                            task.copy(status = TaskStatus.ACTIVE)
+                        else -> task
+                    }
+                }
+            }
+        }
+    }
+
+    /** PLAN:/STEP_DONE:/TOOL_CALL: lines drive the UI, not the transcript. */
+    private fun stripProtocolLines(text: String): String =
+        text.lineSequence()
+            .filterNot { line ->
+                val t = line.trim()
+                t.startsWith("PLAN:") || t.startsWith("STEP_DONE:") || t.startsWith("TOOL_CALL:")
+            }
+            .joinToString("\n")
+            .trim()
+
     private fun agentSystemPrompt(installed: Set<String>): String {
         val tools = SkillEngine.all
             .filter { it.id in installed }
@@ -295,6 +353,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return buildString {
             append("You are a capable coding and research agent running on an Android client. ")
             append("Solve the user's task step by step. You have tools for external information.\n")
+            append("PLAN PROTOCOL: before you start, list your steps, one per line:\n")
+            append("PLAN: <short step description>\n")
+            append("Then as you finish each step, output: STEP_DONE:<step number>\n")
+            append("Keep plans to 2-6 steps. Skip the plan for trivial one-step answers.\n\n")
             append("TOOL PROTOCOL: when you need data, output exactly one line:\n")
             append("TOOL_CALL:<tool>|<args>\n")
             append("Available tools:\n")
@@ -430,6 +492,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun clear() {
         _messages.value = emptyList()
         _error.value = null
+        _tasks.value = emptyList()
         clearImages()
         refreshContext()
     }

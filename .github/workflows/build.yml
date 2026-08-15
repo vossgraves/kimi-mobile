@@ -17,17 +17,58 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Build APK + render screenshot tests
-        run: ./gradlew assembleDebug testDebugUnitTest --stacktrace
+      - name: Build APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Run tests
+        id: tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      # Gradle's console output truncates test exceptions to one line, so the
+      # actual cause only exists in the XML reports. Print them on failure.
+      - name: Print test failures
+        if: failure()
+        run: |
+          echo "::group::Failure details"
+          for f in app/build/test-results/testDebugUnitTest/*.xml; do
+            [ -f "$f" ] || continue
+            if grep -q '<failure\|<error' "$f"; then
+              echo "----- $(basename "$f") -----"
+              python3 - "$f" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          tree = ET.parse(sys.argv[1])
+          for case in tree.iter('testcase'):
+              for bad in list(case.iter('failure')) + list(case.iter('error')):
+                  print(f"\n### {case.get('classname')}.{case.get('name')}")
+                  print((bad.get('message') or '').strip()[:600])
+                  print((bad.text or '').strip()[:2500])
+          PY
+            fi
+          done
+          echo "::endgroup::"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+          if-no-files-found: ignore
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: apk-debug
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
 
       - name: Upload screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
           path: app/build/screenshots/**
+          if-no-files-found: ignore

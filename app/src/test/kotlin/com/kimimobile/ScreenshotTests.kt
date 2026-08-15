@@ -14,6 +14,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.kimimobile.data.CatalogType
 import com.kimimobile.data.Marketplace
 import com.kimimobile.ui.ChatMessage
+import com.kimimobile.ui.components.AgentTask
+import com.kimimobile.ui.components.TaskStatus
 import com.kimimobile.ui.ContextState
 import com.kimimobile.ui.MessageRole
 import com.kimimobile.ui.screens.ChatScreenContent
@@ -59,6 +61,7 @@ class ScreenshotTests {
         contextState: ContextState = ContextState(),
         agentEnabled: Boolean = false,
         modelName: String = "K2 · 0905",
+        tasks: List<AgentTask> = emptyList(),
         searchEnabled: Boolean = false,
         supportsVision: Boolean = false,
     ) {
@@ -76,6 +79,7 @@ class ScreenshotTests {
                     contextState = contextState,
                     agentEnabled = agentEnabled,
                     modelName = modelName,
+                    tasks = tasks,
                     searchEnabled = searchEnabled,
                     supportsVision = supportsVision,
                 )
@@ -188,6 +192,27 @@ class ScreenshotTests {
             ChatMessage(role = MessageRole.ASSISTANT, content = "Next up: the theme. I'll go with a warm palette…"),
         ),
         name = "chat_compacted_notice",
+    )
+
+    @Test
+    fun chatAgentTaskList() = setChatContent(
+        listOf(
+            ChatMessage(role = MessageRole.USER, content = "Research the top 3 Kotlin HTTP clients and compare them"),
+            ChatMessage(
+                role = MessageRole.ASSISTANT,
+                content = "Looking into this now — I'll compare Ktor, OkHttp and Fuel.",
+                streaming = true,
+            ),
+        ),
+        isStreaming = true,
+        agentEnabled = true,
+        tasks = listOf(
+            AgentTask("Search for Kotlin HTTP clients", TaskStatus.DONE),
+            AgentTask("Read the docs for each", TaskStatus.ACTIVE),
+            AgentTask("Compare API ergonomics", TaskStatus.PENDING),
+            AgentTask("Write the summary", TaskStatus.PENDING),
+        ),
+        name = "chat_agent_tasklist",
     )
 
     // ---- Marketplace ----
