@@ -3,6 +3,7 @@ package com.kimimobile.data
 import java.time.LocalDate
 import java.time.LocalTime
 import java.util.concurrent.TimeUnit
+import kotlin.math.pow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -172,62 +173,90 @@ object SkillEngine {
 object Calculator {
 
     fun eval(expression: String): Double {
-        val src = expression.filterNot { it == ' ' }
-        var pos = 0
-        fun peek(): Char = if (pos < src.length) src[pos] else '\u0000'
-        fun advance(): Char = src[pos++]
+        val parser = Parser(expression.filterNot { it.isWhitespace() })
+        val value = parser.parseExpression()
+        require(parser.atEnd()) { "unexpected trailing input" }
+        return value
+    }
 
-        fun primary(): Double {
+    /** Recursive descent — methods can call each other regardless of order. */
+    private class Parser(private val src: String) {
+        private var pos = 0
+
+        fun atEnd(): Boolean = pos >= src.length
+
+        private fun peek(): Char = if (pos < src.length) src[pos] else '\u0000'
+
+        private fun advance(): Char = src[pos++]
+
+        fun parseExpression(): Double {
+            var v = parseTerm()
+            while (peek() == '+' || peek() == '-') {
+                val op = advance()
+                v = if (op == '+') v + parseTerm() else v - parseTerm()
+            }
+            return v
+        }
+
+        private fun parseTerm(): Double {
+            var v = parsePower()
+            while (peek() == '*' || peek() == '/' || peek() == '%') {
+                val op = advance()
+                val r = parsePower()
+                v = when (op) {
+                    '*' -> v * r
+                    '/' -> {
+                        require(r != 0.0) { "division by zero" }
+                        v / r
+                    }
+                    else -> {
+                        require(r != 0.0) { "modulo by zero" }
+                        v % r
+                    }
+                }
+            }
+            return v
+        }
+
+        private fun parsePower(): Double {
+            val base = parseUnary()
+            // Right-associative: 2^3^2 == 2^9
+            return if (peek() == '^') {
+                advance()
+                base.pow(parsePower())
+            } else base
+        }
+
+        private fun parseUnary(): Double {
+            if (peek() == '-') {
+                advance()
+                return -parseUnary()
+            }
+            if (peek() == '+') {
+                advance()
+                return parseUnary()
+            }
+            return parsePrimary()
+        }
+
+        private fun parsePrimary(): Double {
             val c = peek()
             if (c == '(') {
                 advance()
-                val v = expression()
-                if (peek() != ')') throw IllegalArgumentException("missing ')'")
+                val v = parseExpression()
+                require(peek() == ')') { "missing ')'" }
                 advance()
                 return v
             }
             if (c.isDigit() || c == '.') {
                 val sb = StringBuilder()
                 while (pos < src.length && (src[pos].isDigit() || src[pos] == '.')) sb.append(advance())
-                return sb.toString().toDouble()
+                return sb.toString().toDoubleOrNull()
+                    ?: throw IllegalArgumentException("bad number \"$sb\"")
             }
-            throw IllegalArgumentException("unexpected '${c}'")
+            throw IllegalArgumentException(
+                if (c == '\u0000') "unexpected end of expression" else "unexpected '$c'"
+            )
         }
-
-        fun unary(): Double {
-            if (peek() == '-') { advance(); return -unary() }
-            return primary()
-        }
-
-        fun power(): Double {
-            var v = unary()
-            if (peek() == '^') { advance(); v = v.pow(power()) }
-            return v
-        }
-
-        fun factor(): Double {
-            var v = power()
-            while (peek() == '*' || peek() == '/' || peek() == '%') {
-                val op = advance()
-                val r = power()
-                v = when (op) {
-                    '*' -> v * r
-                    '/' -> if (r == 0.0) throw IllegalArgumentException("division by zero") else v / r
-                    else -> if (r == 0.0) throw IllegalArgumentException("modulo by zero") else v % r
-                }
-            }
-            return v
-        }
-
-        fun expression(): Double {
-            var v = factor()
-            while (peek() == '+' || peek() == '-') {
-                val op = advance()
-                v = if (op == '+') v + factor() else v - factor()
-            }
-            return v
-        }
-
-        return expression()
     }
 }

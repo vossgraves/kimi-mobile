@@ -8,8 +8,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,15 +22,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -199,6 +204,7 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     codeBackground: Color = MaterialTheme.colorScheme.surfaceContainerHighest,
+    style: TextStyle = MaterialTheme.typography.bodyLarge,
 ) {
     val context = LocalContext.current
     val onSurface = MaterialTheme.colorScheme.onSurface
@@ -210,36 +216,40 @@ fun MarkdownText(
                 is MarkdownBlock.Paragraph -> {
                     Text(
                         text = inlineToAnnotated(block.inline, onSurface, primary, codeBg),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = style,
                         color = onSurface,
                     )
                 }
                 is MarkdownBlock.Heading -> {
-                    val style = when (block.level) {
+                    val headingStyle = when (block.level) {
                         1 -> MaterialTheme.typography.headlineSmall
                         2 -> MaterialTheme.typography.titleLarge
                         else -> MaterialTheme.typography.titleMedium
                     }
                     Text(
                         text = block.text,
-                        style = style,
+                        style = headingStyle,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                 }
                 is MarkdownBlock.BulletList -> {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         block.items.forEach { item ->
-                            Text(
-                                text = "•  ",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                text = inlineToAnnotated(parseInline(item), onSurface, primary, codeBg),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
+                            Row(verticalAlignment = Alignment.Top) {
+                                Text(
+                                    text = "•",
+                                    style = style,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = inlineToAnnotated(parseInline(item), onSurface, primary, codeBg),
+                                    style = style,
+                                    color = onSurface,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                            }
                         }
                     }
                 }
