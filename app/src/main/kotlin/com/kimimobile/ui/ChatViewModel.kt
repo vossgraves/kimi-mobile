@@ -109,6 +109,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { store.setMathEnabled(enabled) }
     }
 
+    fun setUpdateChannel(channel: String) {
+        viewModelScope.launch { store.setUpdateChannel(channel) }
+    }
+
     fun setMaxContextTokens(max: Long) {
         viewModelScope.launch { store.setMaxContextTokens(max.coerceAtLeast(1000L)) }
     }

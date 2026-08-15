@@ -1,5 +1,6 @@
 package com.kimimobile.ui.components
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -13,25 +14,30 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.sin
 
 /**
  * Three bouncing dots shown while waiting for the first token.
- * Spring-based bounce per dot with a slight stagger.
+ * A sine wave over the shared phase gives a smooth, seamless loop — a linear
+ * ramp would snap back to the start on every cycle.
  */
 @Composable
 fun TypingIndicator(modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "typing")
+    // infiniteRepeatable needs a duration-based spec; spring is physics-based.
     val phase by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        // infiniteRepeatable requires a duration-based spec (spring is physics-based, not allowed here)
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            animation = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "typing-phase",
@@ -43,13 +49,15 @@ fun TypingIndicator(modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        listOf(0, 1, 2).forEach { i ->
-            val offset = ((phase + i * 0.33f) % 1f)
-            val scale = 0.55f + 0.45f * offset
+        repeat(3) { i ->
+            // Stagger each dot a third of a cycle behind the last.
+            val wave = sin((phase + i / 3f) * 2f * PI.toFloat())
+            val t = (wave + 1f) / 2f // 0..1, continuous across the loop
             Box(
                 modifier = Modifier
                     .size(9.dp)
-                    .scale(scale)
+                    .scale(0.6f + 0.4f * t)
+                    .alpha(0.45f + 0.55f * t)
                     .clip(CircleShape)
                     .background(primary),
             )

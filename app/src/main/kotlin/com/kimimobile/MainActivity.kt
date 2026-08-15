@@ -15,6 +15,7 @@ import com.kimimobile.ui.screens.ChatScreen
 import com.kimimobile.ui.screens.LoginScreen
 import com.kimimobile.ui.screens.MarketplaceScreen
 import com.kimimobile.ui.screens.SettingsScreen
+import com.kimimobile.ui.screens.UpdateScreen
 import com.kimimobile.ui.theme.KimiTheme
 
 class MainActivity : ComponentActivity() {
@@ -29,7 +30,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { Chat, Settings, Login, Marketplace }
+private enum class Screen { Chat, Settings, Login, Marketplace, Updates }
 
 @Composable
 private fun App(viewModel: ChatViewModel = viewModel()) {
@@ -46,6 +47,7 @@ private fun App(viewModel: ChatViewModel = viewModel()) {
             onBack = { screen = Screen.Chat },
             onOpenLogin = { screen = Screen.Login },
             onOpenMarketplace = { screen = Screen.Marketplace },
+            onOpenUpdates = { screen = Screen.Updates },
         )
         Screen.Login -> LoginScreen(
             store = viewModel.store,
@@ -55,6 +57,10 @@ private fun App(viewModel: ChatViewModel = viewModel()) {
         Screen.Marketplace -> MarketplaceScreen(
             viewModel = viewModel,
             onBack = { screen = Screen.Chat },
+        )
+        Screen.Updates -> UpdateScreen(
+            viewModel = viewModel,
+            onBack = { screen = Screen.Settings },
         )
     }
 }

@@ -31,6 +31,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
@@ -52,6 +53,7 @@ sealed interface MarkdownBlock {
 sealed interface InlineSpan {
     data class Text(val text: String) : InlineSpan
     data class Bold(val text: String) : InlineSpan
+    data class BoldItalic(val text: String) : InlineSpan
     data class Italic(val text: String) : InlineSpan
     data class InlineCode(val text: String) : InlineSpan
     data class Link(val text: String, val url: String) : InlineSpan
@@ -63,7 +65,7 @@ fun parseMarkdown(raw: String): List<MarkdownBlock> {
     var i = 0
     while (i < lines.size) {
         val line = lines[i]
-        val codeFence = Regex("^```(\\w*)\\s*$").find(line.trim())
+        val codeFence = Regex("^```\\s*([\\w+#-]*).*$").find(line.trim())
         if (codeFence != null) {
             val lang = codeFence.groupValues[1].ifBlank { null }
             val code = StringBuilder()
@@ -117,53 +119,87 @@ fun parseMarkdown(raw: String): List<MarkdownBlock> {
 
 private fun parseInline(text: String): List<InlineSpan> {
     val spans = mutableListOf<InlineSpan>()
+    val buf = StringBuilder()
     var i = 0
-    val s = text
-    while (i < s.length) {
-        when {
-            s.startsWith("**", i) -> {
-                val end = s.indexOf("**", i + 2)
-                if (end > i) {
-                    spans.add(InlineSpan.Bold(s.substring(i + 2, end)))
-                    i = end + 2
-                } else {
-                    spans.add(InlineSpan.Text(s.substring(i, i + 1))); i++
-                }
-            }
-            s.startsWith("`", i) -> {
-                val end = s.indexOf("`", i + 1)
-                if (end > i) {
-                    spans.add(InlineSpan.InlineCode(s.substring(i + 1, end)))
-                    i = end + 1
-                } else {
-                    spans.add(InlineSpan.Text(s.substring(i, i + 1))); i++
-                }
-            }
-            s.startsWith("*", i) -> {
-                val end = s.indexOf("*", i + 1)
-                if (end > i) {
-                    spans.add(InlineSpan.Italic(s.substring(i + 1, end)))
-                    i = end + 1
-                } else {
-                    spans.add(InlineSpan.Text(s.substring(i, i + 1))); i++
-                }
-            }
-            s.startsWith("[", i) -> {
-                val close = s.indexOf("]", i)
-                val openParen = s.indexOf("(", close)
-                val closeParen = s.indexOf(")", openParen)
-                if (close > i && openParen == close + 1 && closeParen > openParen) {
-                    spans.add(InlineSpan.Link(s.substring(i + 1, close), s.substring(openParen + 1, closeParen)))
-                    i = closeParen + 1
-                } else {
-                    spans.add(InlineSpan.Text(s.substring(i, i + 1))); i++
-                }
-            }
-            else -> {
-                spans.add(InlineSpan.Text(s.substring(i, i + 1))); i++
-            }
+
+    fun flush() {
+        if (buf.isNotEmpty()) {
+            spans.add(InlineSpan.Text(buf.toString()))
+            buf.clear()
         }
     }
+
+    /**
+     * Finds a closing token that isn't preceded by a space, so prose like
+     * "2 * 3 * 4" and "A * B" stays literal instead of turning italic.
+     */
+    fun findCloser(token: String, from: Int): Int {
+        var j = text.indexOf(token, from)
+        while (j != -1) {
+            if (j > from && text[j - 1] != ' ') return j
+            j = text.indexOf(token, j + 1)
+        }
+        return -1
+    }
+
+    while (i < text.length) {
+        if (text.startsWith("***", i)) {
+            val end = findCloser("***", i + 3)
+            if (end > i) {
+                flush()
+                spans.add(InlineSpan.BoldItalic(text.substring(i + 3, end)))
+                i = end + 3
+                continue
+            }
+        }
+        if (text.startsWith("**", i)) {
+            val end = findCloser("**", i + 2)
+            if (end > i) {
+                flush()
+                spans.add(InlineSpan.Bold(text.substring(i + 2, end)))
+                i = end + 2
+                continue
+            }
+        }
+        if (text[i] == '`') {
+            val end = text.indexOf('`', i + 1)
+            if (end > i) {
+                flush()
+                spans.add(InlineSpan.InlineCode(text.substring(i + 1, end)))
+                i = end + 1
+                continue
+            }
+        }
+        if (text[i] == '[') {
+            val close = text.indexOf(']', i)
+            val openParen = if (close >= 0) text.indexOf('(', close) else -1
+            val closeParen = if (openParen >= 0) text.indexOf(')', openParen) else -1
+            if (close > i && openParen == close + 1 && closeParen > openParen) {
+                flush()
+                spans.add(
+                    InlineSpan.Link(
+                        text = text.substring(i + 1, close),
+                        url = text.substring(openParen + 1, closeParen),
+                    )
+                )
+                i = closeParen + 1
+                continue
+            }
+        }
+        if (text[i] == '*' && i + 1 < text.length && text[i + 1] != ' ') {
+            val end = findCloser("*", i + 1)
+            if (end > i) {
+                flush()
+                spans.add(InlineSpan.Italic(text.substring(i + 1, end)))
+                i = end + 1
+                continue
+            }
+        }
+        // Batch plain characters instead of one span per char.
+        buf.append(text[i])
+        i++
+    }
+    flush()
     return spans
 }
 
@@ -177,7 +213,10 @@ private fun inlineToAnnotated(
         when (span) {
             is InlineSpan.Text -> append(span.text)
             is InlineSpan.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(span.text) }
-            is InlineSpan.Italic -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { append(span.text) }
+            is InlineSpan.BoldItalic -> withStyle(
+                SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)
+            ) { append(span.text) }
+            is InlineSpan.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(span.text) }
             is InlineSpan.InlineCode -> withStyle(
                 SpanStyle(
                     fontFamily = FontFamily.Monospace,

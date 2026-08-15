@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -68,6 +69,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenLogin: () -> Unit,
     onOpenMarketplace: () -> Unit,
+    onOpenUpdates: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -353,6 +355,25 @@ fun SettingsScreen(
                 Spacer(Modifier.width(8.dp))
                 Text("Browse marketplace")
             }
+
+            // ---- Updates ----
+            Spacer(Modifier.height(18.dp))
+            SectionLabel("Updates")
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onOpenUpdates,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.SystemUpdate, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Check for updates")
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Channel: ${settings.updateChannel.lowercase().replaceFirstChar { it.uppercase() }} · v${com.kimimobile.BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
 
             // ---- Conversation ----
             Spacer(Modifier.height(18.dp))
