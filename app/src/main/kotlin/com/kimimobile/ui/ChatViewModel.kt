@@ -3,48 +3,53 @@ package com.kimimobile.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.kimimobile.data.AgentMode
 import com.kimimobile.data.ApiMessage
 import com.kimimobile.data.AppSettings
-import com.kimimobile.data.ChatApi
-import com.kimimobile.data.KimiModel
-import com.kimimobile.data.ModelCatalog
-import com.kimimobile.data.Models
-import com.kimimobile.data.ProxyDiscovery
-import com.kimimobile.data.SettingsStore
-import com.kimimobile.data.AgentMode
 import com.kimimobile.data.CapabilityRouter
 import com.kimimobile.data.CatalogType
+import com.kimimobile.data.ChatApi
 import com.kimimobile.data.Conversation
 import com.kimimobile.data.ConversationStore
 import com.kimimobile.data.ConversationSummary
-import com.kimimobile.data.ReasoningEffort
+import com.kimimobile.data.KimiModel
+import com.kimimobile.data.Marketplace
+import com.kimimobile.data.ModelCatalog
 import com.kimimobile.data.ModelRouter
+import com.kimimobile.data.Models
 import com.kimimobile.data.NodeState
+import com.kimimobile.data.Provider
+import com.kimimobile.data.ProxyDiscovery
+import com.kimimobile.data.ReasoningEffort
+import com.kimimobile.data.SettingsStore
+import com.kimimobile.data.SidecarClient
+import com.kimimobile.data.SkillEngine
 import com.kimimobile.data.StoredMessage
+import com.kimimobile.data.StreamChunk
+import com.kimimobile.data.Subagent
+import com.kimimobile.data.Subagents
 import com.kimimobile.data.SwarmMode
 import com.kimimobile.data.TaskGraph
 import com.kimimobile.data.TaskKind
 import com.kimimobile.service.WakeLockService
-import com.kimimobile.data.Marketplace
-import com.kimimobile.data.Provider
-import com.kimimobile.data.SkillEngine
-import com.kimimobile.data.Subagent
-import com.kimimobile.data.Subagents
-import com.kimimobile.data.StreamChunk
 import com.kimimobile.ui.components.AgentTask
 import com.kimimobile.ui.components.TaskStatus
+import java.util.UUID
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
-import java.util.UUID
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 
 enum class MessageRole { USER, ASSISTANT }
 
@@ -116,6 +121,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val tasks: StateFlow<List<AgentTask>> = _tasks.asStateFlow()
 
     /** Images staged in the composer, as base64 data URLs. */
+    /** Sidecar availability — process-backed tools only exist when it's up. */
+    private val _sidecar = MutableStateFlow(SidecarClient.Health(available = false))
+    val sidecar: StateFlow<SidecarClient.Health> = _sidecar.asStateFlow()
+
+    private val _mcpTools = MutableStateFlow<List<SidecarClient.McpTool>>(emptyList())
+    val mcpTools: StateFlow<List<SidecarClient.McpTool>> = _mcpTools.asStateFlow()
+
+    fun refreshSidecar() {
+        viewModelScope.launch {
+            val health = SidecarClient.health()
+            _sidecar.value = health
+            _mcpTools.value = if (health.available) {
+                SidecarClient.mcpServers().flatMap { SidecarClient.mcpTools(it) }
+            } else emptyList()
+        }
+    }
+
     private val _discoveringProxy = MutableStateFlow(false)
     val discoveringProxy: StateFlow<Boolean> = _discoveringProxy.asStateFlow()
 
@@ -165,6 +187,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch { conversations.refresh() }
+        refreshSidecar()
         // Find the proxy automatically so nobody has to type a URL, and
         // again whenever the token changes — signing in used to leave the
         // app pointed at an unreachable default and report "connection
@@ -783,11 +806,28 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         val allowedTools = AgentMode.toolsFor(mode, cfg.installedSkills)
                         val skill = SkillEngine.byId(id)?.takeIf { it.id in allowedTools }
-                        val result = if (skill != null) {
-                            runCatching { skill.run(args) }
+                        // MCP tools are namespaced server__tool so they can't
+                        // collide with the built-ins.
+                        val mcp = _mcpTools.value.firstOrNull { "${it.server}__${it.name}" == id }
+                        val result = when {
+                            skill != null -> runCatching { skill.run(args) }
                                 .getOrElse { "Error: ${it.message ?: "tool failed"}" }
-                        } else {
-                            "Error: unknown tool \"$id\""
+
+                            mcp != null -> {
+                                // Args arrive as JSON when the model is precise,
+                                // otherwise treat the text as the first field.
+                                val parsed = runCatching {
+                                    json.parseToJsonElement(args).jsonObject
+                                }.getOrElse {
+                                    buildJsonObject {
+                                        put("input", JsonPrimitive(args))
+                                    }
+                                }
+                                SidecarClient.callMcp(mcp.server, mcp.name, parsed)
+                                    .getOrElse { "Error: ${it.message}" }
+                            }
+
+                            else -> "Error: unknown tool \"$id\""
                         }
                         history += ApiMessage("user", "TOOL_RESULT:$id|$result")
                         _messages.update { list ->
@@ -999,9 +1039,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun agentSystemPrompt(cfg: AppSettings, mode: AgentMode): String {
         val allowed = AgentMode.toolsFor(mode, cfg.installedSkills)
-        val tools = SkillEngine.all
+        val builtIn = SkillEngine.all
             .filter { it.id in allowed }
             .joinToString("\n") { "- ${it.id}: ${it.description}" }
+        // Tools from MCP servers running in the sidecar, if it's up.
+        val fromMcp = _mcpTools.value
+            .joinToString("\n") { "- ${it.server}__${it.name}: ${it.description}" }
+        val tools = listOf(builtIn, fromMcp).filter { it.isNotBlank() }.joinToString("\n")
         return buildString {
             append(mode.prompt).append("\n\n")
             append("PLAN PROTOCOL: before you start, list your steps, one per line:\n")
