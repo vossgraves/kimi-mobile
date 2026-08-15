@@ -9,6 +9,7 @@ import com.kimimobile.data.ChatApi
 import com.kimimobile.data.KimiModel
 import com.kimimobile.data.ModelCatalog
 import com.kimimobile.data.Models
+import com.kimimobile.data.ProxyDiscovery
 import com.kimimobile.data.SettingsStore
 import com.kimimobile.data.AgentMode
 import com.kimimobile.data.CapabilityRouter
@@ -18,6 +19,7 @@ import com.kimimobile.data.ConversationStore
 import com.kimimobile.data.ConversationSummary
 import com.kimimobile.data.ReasoningEffort
 import com.kimimobile.data.StoredMessage
+import com.kimimobile.service.WakeLockService
 import com.kimimobile.data.Marketplace
 import com.kimimobile.data.Provider
 import com.kimimobile.data.SkillEngine
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
@@ -109,6 +112,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val tasks: StateFlow<List<AgentTask>> = _tasks.asStateFlow()
 
     /** Images staged in the composer, as base64 data URLs. */
+    private val _discoveringProxy = MutableStateFlow(false)
+    val discoveringProxy: StateFlow<Boolean> = _discoveringProxy.asStateFlow()
+
+    /** Re-runs proxy discovery on demand. */
+    fun rediscoverProxy() {
+        viewModelScope.launch {
+            _discoveringProxy.value = true
+            val found = ProxyDiscovery.discover(settings.value.baseUrl)
+            _error.value = if (found != null) {
+                store.setBaseUrl(found)
+                "Found proxy at $found"
+            } else {
+                "No proxy found — start it, or set the URL manually"
+            }
+            _discoveringProxy.value = false
+        }
+    }
+
     /** Running spend for this session, shown next to the composer. */
     private val _sessionSpend = MutableStateFlow(SessionSpend())
     val sessionSpend: StateFlow<SessionSpend> = _sessionSpend.asStateFlow()
@@ -137,6 +158,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch { conversations.refresh() }
+        // Find the proxy automatically so nobody has to type a URL.
+        viewModelScope.launch {
+            val cfg = settings.first { it.loaded }
+            if (cfg.proxyAutoDetected || cfg.baseUrl.isBlank()) {
+                _discoveringProxy.value = true
+                val found = ProxyDiscovery.discover(cfg.baseUrl.takeIf { it.isNotBlank() })
+                if (found != null && found != cfg.baseUrl) {
+                    store.setBaseUrl(found)
+                }
+                _discoveringProxy.value = false
+            }
+        }
         // Pull the real model list as soon as settings are available.
         viewModelScope.launch {
             settings.collect { cfg ->
@@ -178,6 +211,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             store.setModel(id)
             // Keep the context ring honest about the new model's window.
             store.setMaxContextTokens(Models.contextTokensFor(id))
+            // A failed request leaves the connection flagged bad; switching
+            // models should clear that so the new one isn't judged by it.
+            _isConnected.value = null
+            _error.value = null
         }
     }
 
@@ -397,6 +434,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _isAgentTurn.value = true
         _isConnected.value = null
         _tasks.value = emptyList()
+        // Agent runs are long; don't let the screen going off kill them.
+        if (cfg.keepAwake) WakeLockService.start(getApplication(), "Agent run in progress")
         viewModelScope.launch {
             try {
                 val model = resolvedModel(cfg)
@@ -517,6 +556,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 _isStreaming.value = false
                 _isAgentTurn.value = false
+                WakeLockService.stop(getApplication())
             }
         }
     }
@@ -689,6 +729,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 _isStreaming.value = false
                 _isAgentTurn.value = false
+                WakeLockService.stop(getApplication())
             }
         }
     }
@@ -880,6 +921,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setCustomRegistries(registries: Set<String>) {
         viewModelScope.launch { store.setCustomRegistries(registries) }
+    }
+
+    fun setKeepAwake(enabled: Boolean) {
+        viewModelScope.launch { store.setKeepAwake(enabled) }
     }
 
     fun setAgentMode(mode: AgentMode) {

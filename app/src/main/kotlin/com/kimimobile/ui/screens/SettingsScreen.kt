@@ -20,13 +20,16 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -68,9 +71,9 @@ import com.kimimobile.ui.ChatViewModel
 import com.kimimobile.ui.components.SettingsRow
 import com.kimimobile.ui.components.SettingsSection
 import com.kimimobile.ui.components.SettingsSwitch
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,6 +89,8 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val contextState by viewModel.contextState.collectAsState()
     val isCompacting by viewModel.isCompacting.collectAsState()
+    val discoveringProxy by viewModel.discoveringProxy.collectAsState()
+    var showAdvanced by rememberSaveable { mutableStateOf(false) }
 
     var baseUrl by rememberSaveable { mutableStateOf("") }
     var token by rememberSaveable { mutableStateOf("") }
@@ -111,10 +116,15 @@ fun SettingsScreen(
         }
     }
 
-    LaunchedEffect(baseUrl, token, loaded) {
+    LaunchedEffect(token, loaded) {
         if (!loaded) return@LaunchedEffect
         delay(500)
-        viewModel.store.save(baseUrl, token, settings.model)
+        viewModel.store.setToken(token)
+    }
+    LaunchedEffect(baseUrl, loaded) {
+        if (!loaded || baseUrl == settings.baseUrl) return@LaunchedEffect
+        delay(600)
+        if (baseUrl.isNotBlank()) viewModel.store.setBaseUrl(baseUrl, manual = true)
     }
     LaunchedEffect(zenKey, loaded) {
         if (!loaded) return@LaunchedEffect
@@ -234,19 +244,24 @@ fun SettingsScreen(
             // ---- Providers ----
             SettingsSection(
                 title = "Providers",
-                subtitle = "Kimi runs through your proxy; Zen's free models need nothing",
+                subtitle = "Kimi runs through a local proxy; Zen's free models need nothing",
             ) {
+                SettingsRow(
+                    title = "Kimi proxy",
+                    subtitle = when {
+                        discoveringProxy -> "Searching…"
+                        settings.baseUrl.isBlank() -> "Not found — tap to search again"
+                        else -> settings.baseUrl
+                    },
+                    icon = Icons.Default.Dns,
+                    onClick = { viewModel.rediscoverProxy() },
+                    trailing = {
+                        if (discoveringProxy) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        }
+                    },
+                )
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    OutlinedTextField(
-                        value = baseUrl,
-                        onValueChange = { baseUrl = it },
-                        label = { Text("Kimi proxy URL") },
-                        placeholder = { Text("http://10.0.2.2:8000/v1") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = token,
                         onValueChange = { token = it },
@@ -264,6 +279,7 @@ fun SettingsScreen(
                                 )
                             }
                         },
+                        supportingText = { Text("Filled in automatically when you sign in") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(10.dp))
@@ -285,11 +301,36 @@ fun SettingsScreen(
                                 )
                             }
                         },
-                        supportingText = {
-                            Text("Free Zen models work without a key — this only adds the paid ones")
-                        },
+                        supportingText = { Text("Free Zen models work without a key") },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                SettingsSwitch(
+                    title = "Keep runs awake",
+                    subtitle = "Holds a wakelock during agent runs, cancellable from the notification",
+                    icon = Icons.Default.Bolt,
+                    checked = settings.keepAwake,
+                    onCheckedChange = viewModel::setKeepAwake,
+                )
+                SettingsRow(
+                    title = "Advanced",
+                    subtitle = if (showAdvanced) "Hide proxy URL" else "Set the proxy URL manually",
+                    icon = Icons.Default.Tune,
+                    onClick = { showAdvanced = !showAdvanced },
+                )
+                if (showAdvanced) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        OutlinedTextField(
+                            value = baseUrl,
+                            onValueChange = { baseUrl = it },
+                            label = { Text("Proxy URL override") },
+                            placeholder = { Text("http://127.0.0.1:8000/v1") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            supportingText = { Text("Leave empty to keep auto-detecting") },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
 

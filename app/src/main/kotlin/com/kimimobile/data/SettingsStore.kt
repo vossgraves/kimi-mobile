@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "kimi_settings")
 
 data class AppSettings(
+    /** Distinguishes defaults from values actually read off disk. */
+    val loaded: Boolean = false,
     val baseUrl: String = "http://10.0.2.2:8000/v1",
     val token: String = "",
     val model: String = "kimi-k2-0905-preview",
@@ -24,6 +26,9 @@ data class AppSettings(
     /** Optional: unlocks Zen's paid catalogue (free models need no key). */
     val zenApiKey: String = "",
     val onboarded: Boolean = false,
+    /** True until the user overrides the proxy URL by hand. */
+    val proxyAutoDetected: Boolean = true,
+    val keepAwake: Boolean = true,
     /** Primary agent mode: chat | plan | build | auto. */
     val agentMode: String = "chat",
     val reasoningEffort: String = "medium",
@@ -57,6 +62,8 @@ class SettingsStore(private val context: Context) {
         val UPDATE_CHANNEL = stringPreferencesKey("update_channel")
         val ZEN_API_KEY = stringPreferencesKey("zen_api_key")
         val ONBOARDED = booleanPreferencesKey("onboarded")
+        val PROXY_AUTO = booleanPreferencesKey("proxy_auto")
+        val KEEP_AWAKE = booleanPreferencesKey("keep_awake")
         val AGENT_MODE = stringPreferencesKey("agent_mode")
         val REASONING_EFFORT = stringPreferencesKey("reasoning_effort")
         val CUSTOM_MCP = stringSetPreferencesKey("custom_mcp_servers")
@@ -69,8 +76,10 @@ class SettingsStore(private val context: Context) {
         val INSTALLED_SKILLS = stringSetPreferencesKey("installed_skills")
     }
 
+    /** False until DataStore has emitted once, so callers can wait. */
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
         AppSettings(
+            loaded = true,
             baseUrl = prefs[Keys.BASE_URL] ?: AppSettings().baseUrl,
             token = prefs[Keys.TOKEN] ?: "",
             model = prefs[Keys.MODEL] ?: AppSettings().model,
@@ -80,6 +89,8 @@ class SettingsStore(private val context: Context) {
             updateChannel = prefs[Keys.UPDATE_CHANNEL] ?: "STABLE",
             zenApiKey = prefs[Keys.ZEN_API_KEY] ?: "",
             onboarded = prefs[Keys.ONBOARDED] ?: false,
+            proxyAutoDetected = prefs[Keys.PROXY_AUTO] ?: true,
+            keepAwake = prefs[Keys.KEEP_AWAKE] ?: true,
             agentMode = prefs[Keys.AGENT_MODE] ?: "chat",
             reasoningEffort = prefs[Keys.REASONING_EFFORT] ?: "medium",
             customMcpServers = prefs[Keys.CUSTOM_MCP] ?: emptySet(),
@@ -148,6 +159,18 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setCustomRegistries(registries: Set<String>) {
         context.dataStore.edit { prefs -> prefs[Keys.CUSTOM_REGISTRIES] = registries }
+    }
+
+    /** Discovery writes here; the manual field marks auto-detect off. */
+    suspend fun setBaseUrl(url: String, manual: Boolean = false) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.BASE_URL] = url.trim().trimEnd('/')
+            if (manual) prefs[Keys.PROXY_AUTO] = false
+        }
+    }
+
+    suspend fun setKeepAwake(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[Keys.KEEP_AWAKE] = enabled }
     }
 
     suspend fun setOnboarded(done: Boolean) {

@@ -40,9 +40,11 @@ private fun App(viewModel: ChatViewModel = viewModel()) {
     val settings by viewModel.settings.collectAsState()
     var screen by remember { mutableStateOf<Screen?>(null) }
 
-    // First launch lands on Welcome; afterwards straight into the chat.
-    LaunchedEffect(settings.onboarded) {
-        if (screen == null) {
+    // Wait for DataStore to actually emit before deciding — reading the
+    // defaults first is what made "Decide later" show the welcome screen
+    // again on every launch.
+    LaunchedEffect(settings.loaded, settings.onboarded) {
+        if (screen == null && settings.loaded) {
             screen = if (settings.onboarded) Screen.Chat else Screen.Welcome
         }
     }

@@ -69,10 +69,3 @@ jobs:
           # Rolling tag: the in-app updater always reads `nightly`.
           make_latest: false
 
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-screenshots
-          path: app/build/screenshots/**
-          if-no-files-found: ignore

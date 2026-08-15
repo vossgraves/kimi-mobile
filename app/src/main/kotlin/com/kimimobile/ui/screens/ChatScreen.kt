@@ -34,12 +34,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
@@ -87,7 +89,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -924,8 +928,8 @@ private fun ChatMessageList(
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         items(messages, key = { it.id }) { message ->
             MessageBubble(
@@ -946,9 +950,9 @@ private fun MessageBubble(
     if (message.notice) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Surface(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.widthIn(max = 480.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(Modifier.padding(12.dp)) {
                     Text(
@@ -958,10 +962,12 @@ private fun MessageBubble(
                         color = MaterialTheme.colorScheme.tertiary,
                     )
                     Spacer(Modifier.height(6.dp))
-                    MarkdownText(
-                        markdown = message.content,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    SelectionContainer {
+                        MarkdownText(
+                            markdown = message.content,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
             }
         }
@@ -969,6 +975,8 @@ private fun MessageBubble(
     }
 
     if (message.role == MessageRole.USER) {
+        // Only the user gets a bubble — it marks the turn without indenting
+        // every assistant line.
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.End,
@@ -994,77 +1002,89 @@ private fun MessageBubble(
                 Surface(
                     color = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
-                    shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp),
-                    modifier = Modifier.widthIn(max = 560.dp),
+                    shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
+                    modifier = Modifier.widthIn(max = 520.dp),
                 ) {
-                    Text(
-                        text = message.content,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                    )
-                }
-            }
-        }
-    } else {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start,
-        ) {
-            Box(
-                modifier = Modifier
-                    .padding(top = 4.dp)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.secondaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "K",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                if (message.reasoning.isNotBlank()) {
-                    ThinkingBlock(
-                        reasoning = message.reasoning,
-                        streaming = showTyping,
-                        modifier = Modifier.padding(bottom = 6.dp),
-                    )
-                }
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp),
-                    modifier = Modifier.widthIn(max = 560.dp),
-                ) {
-                    when {
-                        showTyping && message.content.isEmpty() ->
-                            TypingIndicator(modifier = Modifier.padding(16.dp))
-
-                        message.failed -> Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                            Text(
-                                text = "That request didn't go through.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            TextButton(onClick = onRetry, contentPadding = PaddingValues(0.dp)) {
-                                Icon(Icons.Default.Refresh, contentDescription = null, Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Retry")
-                            }
-                        }
-
-                        else -> MarkdownText(
-                            markdown = message.content,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    SelectionContainer {
+                        Text(
+                            text = message.content,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                         )
                     }
                 }
             }
+        }
+        return
+    }
+
+    // Assistant: full width, no avatar, no bubble — the text is the content,
+    // and the extra 36dp of indent was making everything feel cramped.
+    Column(Modifier.fillMaxWidth()) {
+        if (message.reasoning.isNotBlank()) {
+            ThinkingBlock(
+                reasoning = message.reasoning,
+                streaming = showTyping,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+        when {
+            showTyping && message.content.isEmpty() ->
+                TypingIndicator(modifier = Modifier.padding(vertical = 8.dp))
+
+            message.failed -> Column {
+                Text(
+                    text = "That request didn't go through.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = onRetry, contentPadding = PaddingValues(0.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Retry")
+                }
+            }
+
+            else -> {
+                SelectionContainer {
+                    MarkdownText(markdown = message.content)
+                }
+                if (!showTyping && message.content.isNotBlank()) {
+                    MessageActions(content = message.content)
+                }
+            }
+        }
+    }
+}
+
+/** Copy affordance under each finished reply. */
+@Composable
+private fun MessageActions(content: String) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember(content) { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.padding(top = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(
+            onClick = {
+                clipboard.setText(AnnotatedString(content))
+                copied = true
+            },
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Icon(
+                if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                contentDescription = "Copy message",
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (copied) "Copied" else "Copy",
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }

@@ -48,11 +48,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.kimimobile.data.SettingsStore
-import com.kimimobile.data.WebViewUa
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private const val KIMI_URL = "https://www.kimi.com"
+private const val KIMI_URL = "https://www.kimi.com/login"
+private const val KIMI_HOME = "https://www.kimi.com"
 
 /**
  * WebView login: loads kimi.com, lets you sign in normally, then lifts the
@@ -184,9 +184,13 @@ fun LoginScreen(
                             loadWithOverviewMode = true
                             mediaPlaybackRequiresUserGesture = false
                             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                            // Derived from the installed WebView, minus the
-                            // "; wv" tag that gets SPAs to serve a blank shell.
-                            userAgentString = WebViewUa.desktopClassMobile(ctx)
+                            allowContentAccess = true
+                            allowFileAccess = true
+                            cacheMode = WebSettings.LOAD_DEFAULT
+                            setSupportMultipleWindows(false)
+                            // Leave the user agent alone. kimi.com is tested
+                            // against the stock WebView UA; overriding it is
+                            // what produced the blank page.
                         }
                         // `this` here is the WebView; using apply on the
                         // CookieManager would pass the wrong receiver.
@@ -214,7 +218,21 @@ fun LoginScreen(
                             ) {
                                 // Only surface failures of the main document.
                                 if (request?.isForMainFrame == true) {
-                                    loadError = "Couldn't reach kimi.com — check your connection."
+                                    loadError = "Couldn't reach kimi.com — " +
+                                        (error?.description ?: "check your connection")
+                                }
+                            }
+
+                            override fun onReceivedHttpError(
+                                view: WebView?,
+                                request: WebResourceRequest?,
+                                errorResponse: android.webkit.WebResourceResponse?,
+                            ) {
+                                if (request?.isForMainFrame == true &&
+                                    (errorResponse?.statusCode ?: 0) >= 400
+                                ) {
+                                    // /login can redirect oddly; fall back home.
+                                    view?.loadUrl(KIMI_HOME)
                                 }
                             }
                         }

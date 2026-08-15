@@ -278,8 +278,9 @@ class ChatApi(
                 "Attachment rejected: $raw"
             code == 401 || raw.contains("token", true) && code >= 400 ->
                 "Token expired or invalid — sign in again in Settings"
-            code == 429 ->
-                "Rate limited — you've hit the free-tier cap, try again later"
+            code == 429 || raw.contains("FreeUsageLimitError") || raw.contains("Rate limit") ->
+                "This model is rate-limited right now — pick another model, " +
+                    "or wait a few minutes and retry"
             else -> "HTTP $code: $raw"
         }
     }

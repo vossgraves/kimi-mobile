@@ -18,6 +18,11 @@ val releaseStorePath = keystoreProps.getProperty("storeFile")
     ?: System.getenv("KEYSTORE_FILE")
 val hasReleaseSigning = releaseStorePath?.let { rootProject.file(it).isFile } == true
 
+// A debug key generated per machine means every CI build is signed by a
+// different identity, and Android refuses to install one over another. Ship a
+// checked-in debug keystore so upgrades always work.
+val sharedDebugKeystore = rootProject.file("debug.keystore")
+
 android {
     namespace = "com.kimimobile"
     compileSdk = 35
@@ -31,6 +36,14 @@ android {
     }
 
     signingConfigs {
+        if (sharedDebugKeystore.isFile) {
+            getByName("debug") {
+                storeFile = sharedDebugKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
         if (hasReleaseSigning) {
             create("release") {
                 storeFile = rootProject.file(releaseStorePath!!)

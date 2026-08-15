@@ -6,3 +6,8 @@ local.properties
 .idea/
 captures/
 .DS_Store
+# The shared debug keystore IS committed on purpose — it keeps APK
+# signatures stable so updates install. Real release keys are not.
+!debug.keystore
+release.keystore
+keystore.properties
